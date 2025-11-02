@@ -1,0 +1,5 @@
+1. Add fucntionality for blind, g\how can they operate the chrome extension
+2. Add diff languages to the TTS node_modules
+3. Maybe integerate an ETTS
+4. Select the best possible model
+5. Make a basic screen reader !!
