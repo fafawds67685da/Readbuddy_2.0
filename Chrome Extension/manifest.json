@@ -1,33 +1,53 @@
 {
-  "manifest_version": 3,
-  "name": "ReadBuddy - AI Screen Reader",
-  "version": "4.0.0",
-  "description": "AI-powered screen reader that summarizes text, describes images, and analyzes videos - Always accessible via side panel",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "storage",
-    "tts",
-    "sidePanel"
-  ],
-  "host_permissions": [
-    "http://127.0.0.1:8000/*",
-    "http://localhost:8000/*"
-  ],
-  "action": {
-    "default_title": "Open ReadBuddy Side Panel"
-  },
-  "side_panel": {
-    "default_path": "sidepanel.html"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_end"
+    "manifest_version": 3,
+    "name": "ReadBuddy AI Screen Reader",
+    "version": "1.1.0",
+    "description": "AI-powered summarization, CORS-compatible video visual analysis, and screen reading.",
+    
+    "action": {
+        "default_title": "ReadBuddy - AI Screen Reader"
+    },
+    
+    "side_panel": {
+        "default_path": "sidepanel.html"
+    },
+    
+    "background": {
+        "service_worker": "background.js"
+    },
+    
+    "content_scripts": [
+        {
+            "matches": ["<all_urls>"],
+            "js": ["content.js"],
+            "all_frames": true,
+            "run_at": "document_idle"
+        }
+    ],
+    
+    "permissions": [
+        "activeTab",
+        "storage",
+        "scripting",
+        "tabs",
+        "tts",
+        "sidePanel",
+        "unlimitedStorage",
+        "tabCapture"
+    ],
+    
+    "host_permissions": [
+        "http://127.0.0.1:8000/*",
+        "http://localhost:8000/*",
+        "<all_urls>"
+    ],
+    
+    "commands": {
+        "toggle-reader-mode": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+R"
+            },
+            "description": "Toggle in-page reader mode"
+        }
     }
-  ],
-  "background": {
-    "service_worker": "background.js"
-  }
 }

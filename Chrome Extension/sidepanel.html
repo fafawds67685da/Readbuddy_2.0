@@ -145,6 +145,16 @@
     .btn-secondary:hover {
       background: #e5e7eb;
     }
+    
+    .btn-special { /* New style for the video analysis button */
+      background: #059669;
+      color: white;
+      font-size: 16px;
+    }
+    
+    .btn-special:hover {
+      background: #047857;
+    }
 
     .btn-danger {
       background: #ef4444;
@@ -307,7 +317,7 @@
       <div class="status-indicator">
         <div class="status-dot"></div>
         <span>Ready to assist</span>
-      </div>
+        </div>
       <span id="pageInfo" style="font-size: 11px; color: #9ca3af;">No page selected</span>
     </div>
 
@@ -341,11 +351,13 @@
             <span class="icon">🤖</span>
             <span>Analyze Current Page</span>
           </button>
-
-          <button id="toggleReaderBtn" class="btn-secondary">
-            <span class="icon">⌨️</span>
-            <span>Toggle Screen Reader</span>
+          
+          <button id="analyzeVideoBtn" class="btn-special">
+            <span class="icon">👁️‍🗨️</span>
+            <span>Video Visuals Analysis (30s)</span>
           </button>
+
+          <!-- Toggle Screen Reader button removed -->
 
           <button id="stopBtn" class="btn-danger">
             <span class="icon">⏹️</span>
@@ -358,8 +370,8 @@
           </button>
         </div>
       </div>
-
-      <div class="section">
+      
+            <div class="section">
         <h3>📄 Analysis Results</h3>
         <div class="loading" id="loading">
           <div class="spinner"></div>

@@ -8,3 +8,4 @@ urllib3==2.1.0
 youtube-transcript-api==0.6.2
 sentencepiece==0.1.99
 protobuf==4.25.2
+pydantic==1.10.12
