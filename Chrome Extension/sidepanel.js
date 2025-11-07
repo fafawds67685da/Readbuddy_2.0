@@ -1,19 +1,34 @@
-// sidepanel.js - FIXED: Button debouncing and better state management
+// sidepanel.js - Multi-frame video analysis with pause/resume coordination
 
 let speechRate = 1.0;
 let autoSpeak = true;
 let lastResults = null;
 let isVideoAnalyzing = false;
-let isProcessing = false; // NEW: Prevent double-clicks
+let isProcessing = false;
+
+// NEW: Video analysis settings
+let captureMode = 'multi'; // 'single' or 'multi'
+let frameInterval = 5; // 3, 5, or 10 seconds
+
+// NEW: Countdown timer state
+let countdownInterval = null;
+let remainingSeconds = 30;
+let isTTSSpeaking = false; // Flag to prevent duplicate resume commands
 
 // Load saved settings
-chrome.storage.sync.get(['speechRate', 'autoSpeak'], (result) => {
+chrome.storage.sync.get(['speechRate', 'autoSpeak', 'captureMode', 'frameInterval'], (result) => {
   speechRate = result.speechRate || 1.0;
   autoSpeak = result.autoSpeak !== false;
+  captureMode = result.captureMode || 'multi';
+  frameInterval = result.frameInterval || 5;
   
   document.getElementById('speedSlider').value = speechRate;
   document.getElementById('speedValue').textContent = speechRate.toFixed(1) + 'x';
   document.getElementById('autoSpeak').checked = autoSpeak;
+  document.getElementById('captureMode').value = captureMode;
+  document.getElementById('frameInterval').value = frameInterval;
+  
+  updateVideoButtonText();
 });
 
 // Update page info
@@ -34,7 +49,6 @@ updatePageInfo();
 // Listen for tab changes
 chrome.tabs.onActivated.addListener(() => {
   updatePageInfo();
-  // Reset video analysis state when tab changes
   if (isVideoAnalyzing) {
     resetVideoAnalysisButton();
   }
@@ -43,27 +57,140 @@ chrome.tabs.onActivated.addListener(() => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete') {
     updatePageInfo();
-    // Reset video analysis state when page reloads
     if (isVideoAnalyzing) {
       resetVideoAnalysisButton();
     }
   }
 });
 
-// NEW: Helper function to reset video analysis button
+  // NEW: Countdown timer functions
+  function startCountdownTimer() {
+    const countdownDisplay = document.getElementById('countdownDisplay');
+    const countdownText = document.getElementById('countdownText');
+    const countdownProgress = document.getElementById('countdownProgress');
+  
+    if (!countdownDisplay || !countdownText || !countdownProgress) {
+      console.error('❌ Countdown elements not found in DOM!');
+      return;
+    }
+    
+    // Stop any existing countdown
+    if (countdownInterval) {
+      console.log('⏰ Clearing existing countdown interval');
+      clearInterval(countdownInterval);
+    }
+  
+    console.log(`⏰ Starting countdown timer - showing display for ${remainingSeconds}s...`);
+    countdownDisplay.style.display = 'block';
+    
+    // Store initial duration for progress bar calculation
+    const initialDuration = remainingSeconds;
+  
+    // Update immediately
+    updateCountdownDisplay(initialDuration);
+    console.log(`⏰ Countdown display should now be visible with ${remainingSeconds}s`);
+  
+    // Update every second
+    countdownInterval = setInterval(() => {
+      remainingSeconds--;
+    
+      if (remainingSeconds <= 0) {
+        remainingSeconds = initialDuration; // Reset for next cycle
+      }
+    
+      updateCountdownDisplay(initialDuration);
+    }, 1000);
+    
+    console.log('✅ Countdown timer started successfully');
+  }
+
+  function updateCountdownDisplay(maxDuration = 30) {
+    const countdownText = document.getElementById('countdownText');
+    const countdownProgress = document.getElementById('countdownProgress');
+  
+    countdownText.textContent = `${remainingSeconds}s`;
+  
+    // DYNAMIC: Update progress bar based on actual duration
+    const percentage = (remainingSeconds / maxDuration) * 100;
+    countdownProgress.style.width = `${percentage}%`;
+  
+    // Change color when close to analysis (last 5s)
+    if (remainingSeconds <= 5) {
+      countdownProgress.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+      countdownText.style.color = '#ef4444';
+    } else {
+      countdownProgress.style.background = 'linear-gradient(90deg, #2563eb, #1d4ed8)';
+      countdownText.style.color = '#2563eb';
+    }
+  }
+
+  function stopCountdownTimer() {
+    console.log('⏸️ Stopping countdown timer (video paused for TTS)');
+    if (countdownInterval) {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+    }
+    // Keep countdown display visible but frozen
+  }
+
+  function resetCountdown() {
+    console.log('▶️ Restarting countdown timer (video resumed after TTS)');
+    remainingSeconds = 30;
+    updateCountdownDisplay();
+    
+    // Restart the countdown interval for the next 30s cycle
+    if (countdownInterval) {
+      clearInterval(countdownInterval);
+    }
+    
+    countdownInterval = setInterval(() => {
+      remainingSeconds--;
+    
+      if (remainingSeconds <= 0) {
+        remainingSeconds = 30; // Reset for next cycle
+      }
+    
+      updateCountdownDisplay();
+    }, 1000);
+  }
+
+// Helper function to reset video analysis button
 function resetVideoAnalysisButton() {
   isVideoAnalyzing = false;
   isProcessing = false;
+  
+  // Hide countdown when analysis stops completely
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+  
+  const countdownDisplay = document.getElementById('countdownDisplay');
+  if (countdownDisplay) {
+    countdownDisplay.style.display = 'none';
+  }
+  remainingSeconds = 30;
+  
+  updateVideoButtonText();
   const btn = document.getElementById('analyzeVideoBtn');
-  btn.querySelector('span:last-child').textContent = 'Video Visuals Analysis (30s)';
   btn.classList.remove('btn-danger');
   btn.classList.add('btn-special');
   btn.disabled = false;
 }
 
+// Update video button text based on settings
+function updateVideoButtonText() {
+  const btn = document.getElementById('analyzeVideoBtn');
+  const mode = captureMode === 'multi' ? 'Multi-Frame' : 'Single-Frame';
+  const interval = captureMode === 'multi' ? `(${frameInterval}s intervals)` : '(30s)';
+  
+  if (!isVideoAnalyzing) {
+    btn.querySelector('span:last-child').textContent = `${mode} Video Analysis ${interval}`;
+  }
+}
+
 // Analyze button (Text/Image/Video Metadata Summary)
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
-  // NEW: Prevent double-clicks
   if (isProcessing) {
     console.log('⚠️ Already processing, ignoring click');
     return;
@@ -84,7 +211,6 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
       return;
     }
 
-    // Extract content from page
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: extractPageContent
@@ -103,7 +229,6 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
       videos: videos.length
     });
 
-    // Send to backend
     const response = await fetch('http://127.0.0.1:8000/analyze-page', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -129,15 +254,13 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
     showError(err.message);
     console.error('Analysis error:', err);
   } finally {
-    // NEW: Re-enable button after operation completes
     isProcessing = false;
     btn.disabled = false;
   }
 });
 
-// --- Video Visuals Analysis Button (FIXED) ---
+// Video Visuals Analysis Button
 document.getElementById('analyzeVideoBtn').addEventListener('click', async () => {
-  // NEW: Prevent double-clicks
   if (isProcessing) {
     console.log('⚠️ Already processing video command, ignoring click');
     return;
@@ -155,50 +278,72 @@ document.getElementById('analyzeVideoBtn').addEventListener('click', async () =>
     return;
   }
   
-  // Toggle state logic
   isVideoAnalyzing = !isVideoAnalyzing;
   
   if (isVideoAnalyzing) {
     // Start Analysis
+    console.log('🎬 Changing button to STOP state...');
     btn.querySelector('span:last-child').textContent = 'STOP Video Analysis';
     btn.classList.remove('btn-special');
     btn.classList.add('btn-danger');
+    console.log('🔴 Button classes after change:', btn.className);
     clearOutput();
-    showLoading(true, "Searching for video and starting loop...");
-
-    console.log('🎬 Starting video analysis...');
     
-    // Send message to content script to START the video analysis loop
+    // Start countdown timer IMMEDIATELY
+    console.log('⏱️ Starting countdown timer NOW...');
+    startCountdownTimer();
+    
+    const modeText = captureMode === 'multi' ? `multi-frame (${frameInterval}s intervals)` : 'single-frame';
+    showLoading(true, `Starting ${modeText} analysis...`);
+
+  console.log('🎬 Starting video analysis...');
+    
+    // Send current settings to content script
+    chrome.tabs.sendMessage(tab.id, { 
+      action: 'updateVideoSettings',
+      captureMode: captureMode,
+      frameInterval: frameInterval
+    });
+    
+    // Start the video analysis loop
     chrome.tabs.sendMessage(tab.id, { action: 'startVideoAnalysis' }, (response) => {
+      isProcessing = false;
+      
       if (chrome.runtime.lastError) {
         console.error('Error starting video analysis:', chrome.runtime.lastError);
         showError('Could not start video analysis. Please refresh the page.');
-        // Reset button
         resetVideoAnalysisButton();
+        stopCountdownTimer();
+        btn.disabled = false;
       } else {
-        console.log('✅ Video analysis started');
+        console.log('✅ Video analysis started - button should stay RED');
+        // CRITICAL: Keep button enabled in "STOP" state, don't reset text
+        btn.disabled = false;
+        // Verify countdown is still visible
+        const countdownDisplay = document.getElementById('countdownDisplay');
+        if (countdownDisplay && countdownDisplay.style.display !== 'block') {
+          console.warn('⚠️ Countdown was hidden, reshowing...');
+          countdownDisplay.style.display = 'block';
+        }
       }
-      // Re-enable button after command sent
-      isProcessing = false;
-      btn.disabled = false;
     });
     
   } else {
     // Stop Analysis
     console.log('🛑 Stopping video analysis...');
-    btn.querySelector('span:last-child').textContent = 'Video Visuals Analysis (30s)';
+    btn.querySelector('span:last-child').textContent = 'Video Visuals Analysis';
     btn.classList.remove('btn-danger');
     btn.classList.add('btn-special');
-    showLoading(false);
+  showLoading(false);
+  stopCountdownTimer();
+    updateVideoButtonText();
     
-    // Send message to content script to STOP the video analysis loop
     chrome.tabs.sendMessage(tab.id, { action: 'stopVideoAnalysis' }, (response) => {
       if (chrome.runtime.lastError) {
         console.error('Error stopping video analysis:', chrome.runtime.lastError);
       } else {
         console.log('✅ Video analysis stopped');
       }
-      // Re-enable button after command sent
       isProcessing = false;
       btn.disabled = false;
     });
@@ -211,19 +356,91 @@ document.getElementById('analyzeVideoBtn').addEventListener('click', async () =>
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('📨 Sidepanel received message:', message.action);
   
-  if (message.action === 'videoAnalysisUpdate') {
-    console.log('📹 Video update:', message.description);
+  // Ensure countdown is visible when analysis is loading (fallback if start hook was missed)
+  // FIXED: Start countdown when video analysis begins
+  if (message.action === 'videoAnalysisStarted') {
+    console.log('⏰ Video analysis started - starting countdown timer');
+    isVideoAnalyzing = true;
+    
+    // SEGMENTED DURATION: Use segment duration from message
+    if (message.duration && message.duration > 0) {
+      remainingSeconds = message.duration;
+      const segInfo = message.segment && message.totalSegments 
+        ? ` (Segment ${message.segment}/${message.totalSegments})` 
+        : '';
+      console.log(`📏 Setting countdown to ${message.duration}s${segInfo}`);
+    } else {
+      remainingSeconds = 30; // Fallback
+    }
+    
+    startCountdownTimer();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.action === 'videoAnalysisLoading') {
+    const countdownDisplay = document.getElementById('countdownDisplay');
+    if (countdownDisplay && countdownDisplay.style.display !== 'block' && isVideoAnalyzing) {
+      console.log('⏱️ Starting countdown (via loading message)');
+      startCountdownTimer();
+    }
+  }
+
+    if (message.action === 'resetCountdown' || message.action === 'restartCountdown') {
+      // Restart countdown timer when video resumes after narration
+      console.log('⏱️ Restarting countdown timer (for next 30s cycle)');
+      resetCountdown();
+      sendResponse({ success: true });
+    }
+    else if (message.action === 'stopCountdown') {
+      // Stop countdown timer when video pauses for TTS
+      console.log('⏱️ Stopping countdown timer (TTS speaking)');
+      stopCountdownTimer();
+      sendResponse({ success: true });
+    }
+    else if (message.action === 'videoAnalysisUpdate') {
+    // Single frame result
+    console.log('📹 Single frame update:', message.description);
     showLoading(false);
-    displayVideoDescription(message.description, message.timestamp);
+    displaySingleFrameResult(message.description, message.timestamp);
+    
     if (autoSpeak) {
       const timeStr = Math.floor(message.timestamp);
-      speak(`At ${timeStr} seconds, the video shows: ${message.description}`);
+      speakWithCallback(`At ${timeStr} seconds: ${message.description}`, () => {
+        // After TTS completes, tell content script to resume video
+        console.log('✅ TTS completed, sending resume command...');
+        sendResumeVideoCommand();
+      });
+    } else {
+      // If auto-speak is off, resume immediately
+      sendResumeVideoCommand();
     }
     sendResponse({ success: true });
-  } else if (message.action === 'videoAnalysisError') {
+  } 
+  else if (message.action === 'videoSequenceAnalyzed') {
+    // Multi-frame sequence result
+    console.log('🎬 Video sequence analyzed');
+    showLoading(false);
+    displayVideoSequence(message.summary, message.captions, message.frameCount);
+    
+    if (autoSpeak && !isTTSSpeaking) {
+      isTTSSpeaking = true; // Prevent duplicate calls
+      speakWithCallback(`Video analysis complete for ${message.frameCount} frames. ${message.summary}`, () => {
+        // After TTS completes, tell content script to resume video
+        console.log('✅ TTS completed, sending resume command...');
+        isTTSSpeaking = false;
+        sendResumeVideoCommand();
+      });
+    } else if (!autoSpeak) {
+      // If auto-speak is off, resume immediately
+      sendResumeVideoCommand();
+    }
+    // If already speaking, don't call resume at all
+    sendResponse({ success: true });
+  }
+  else if (message.action === 'videoAnalysisError') {
     console.error('❌ Video error:', message.message);
     
-    // NEW: Only stop the loop if it's a critical error
     const criticalErrors = [
       'Could not find a visible video element',
       'Video element was removed from page'
@@ -238,7 +455,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     showError(`Video Analysis: ${message.message}`);
     sendResponse({ success: true });
-  } else if (message.action === 'videoAnalysisLoading') {
+  } 
+  else if (message.action === 'videoAnalysisLoading') {
     console.log('⏳ Video loading:', message.message);
     showLoading(true, message.message);
     sendResponse({ success: true });
@@ -247,11 +465,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+// NEW: Send resume command to content script
+async function sendResumeVideoCommand() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) {
+      chrome.tabs.sendMessage(tab.id, { action: 'resumeVideo' }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('Error sending resume command:', chrome.runtime.lastError);
+        } else {
+          console.log('✅ Resume command sent successfully');
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error in sendResumeVideoCommand:', error);
+  }
+}
+
+// NEW: Speak function with callback for when speech ends
+function speakWithCallback(text, callback) {
+  console.log('🎤 Starting TTS speech...');
+  window.speechSynthesis.cancel();
+  
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = speechRate;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+  
+  // Call callback when speech ends
+  utterance.onend = () => {
+    console.log('🔊 Speech finished, calling callback...');
+    if (callback) callback();
+  };
+  
+  // Also call callback on error to prevent hanging
+  utterance.onerror = (event) => {
+    console.error('❌ Speech error:', event);
+    if (callback) callback();
+  };
+  
+  console.log('🔊 Speaking text:', text.substring(0, 50) + '...');
+  window.speechSynthesis.speak(utterance);
+}
+
 // Extract page content function (runs in page context)
 function extractPageContent() {
   const text = document.body.innerText.slice(0, 4000);
   
-  // Get images
   const images = Array.from(document.images)
     .filter(img => {
       const src = img.src || '';
@@ -262,7 +523,6 @@ function extractPageContent() {
     .map(img => img.src)
     .slice(0, 10);
   
-  // Get videos
   const videos = [];
   
   document.querySelectorAll('video').forEach(v => {
@@ -308,11 +568,26 @@ document.getElementById('autoSpeak').addEventListener('change', (e) => {
   chrome.storage.sync.set({ autoSpeak });
 });
 
+// NEW: Capture mode dropdown
+document.getElementById('captureMode').addEventListener('change', (e) => {
+  captureMode = e.target.value;
+  chrome.storage.sync.set({ captureMode });
+  updateVideoButtonText();
+  console.log('⚙️ Capture mode changed to:', captureMode);
+});
+
+// NEW: Frame interval dropdown
+document.getElementById('frameInterval').addEventListener('change', (e) => {
+  frameInterval = parseInt(e.target.value);
+  chrome.storage.sync.set({ frameInterval });
+  updateVideoButtonText();
+  console.log('⚙️ Frame interval changed to:', frameInterval + 's');
+});
+
 // Display results (for standard page analysis)
 function displayResults(data) {
   let html = '';
   
-  // Text Summary
   html += '<div style="margin-bottom: 20px;">';
   html += '<h3 style="color: #2563eb; margin-bottom: 10px;">📝 Text Summary</h3>';
   
@@ -325,7 +600,6 @@ function displayResults(data) {
   }
   html += '</div>';
   
-  // Images
   if (data.image_descriptions && data.image_descriptions.length > 0) {
     html += '<div style="margin-bottom: 20px;">';
     html += '<h3 style="color: #2563eb; margin-bottom: 10px;">🖼️ Image Descriptions</h3>';
@@ -343,7 +617,6 @@ function displayResults(data) {
     html += '</div>';
   }
   
-  // Videos
   if (data.video_descriptions && data.video_descriptions.length > 0 && 
       data.video_descriptions[0].type !== 'none') {
     html += '<div style="margin-bottom: 20px;">';
@@ -365,7 +638,6 @@ function displayResults(data) {
     html += '</div>';
   }
   
-  // Stats
   if (data.count) {
     html += `<p style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280;">`;
     html += `📊 Processed: ${data.count.images_processed} images`;
@@ -378,20 +650,59 @@ function displayResults(data) {
   document.getElementById('output').innerHTML = html;
 }
 
-// Display live video analysis descriptions
-function displayVideoDescription(text, timestamp) {
+// Display single video frame result (single-frame mode)
+function displaySingleFrameResult(description, timestamp) {
   const timeFormatted = Math.floor(timestamp);
   let html = `
-    <div style="margin-bottom: 15px; padding: 10px; background: #e6fffa; border-left: 3px solid #38b2ac; border-radius: 4px;">
-      <p style="margin-bottom: 4px;"><strong>[${timeFormatted}s] Live Visuals:</strong></p>
-      <p style="font-size: 14px; line-height: 1.5; color: #047857;">${text}</p>
+    <div style="margin-bottom: 15px; padding: 12px; background: #e6fffa; border-left: 3px solid #38b2ac; border-radius: 6px;">
+      <p style="margin-bottom: 6px; font-weight: 600; color: #047857;">[${timeFormatted}s] Single Frame Analysis:</p>
+      <p style="font-size: 14px; line-height: 1.6; color: #065f46;">${description}</p>
     </div>
   `;
   
-  // Append to the output div
   const outputDiv = document.getElementById('output');
   outputDiv.insertAdjacentHTML('afterbegin', html);
-  outputDiv.scrollTop = 0; // Scroll to show the newest result
+  outputDiv.scrollTop = 0;
+}
+
+// Display video sequence analysis (multi-frame mode)
+function displayVideoSequence(summary, captions, frameCount) {
+  let html = `
+    <div style="margin-bottom: 20px; padding: 16px; background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); border-left: 4px solid #3b82f6; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+      <h3 style="color: #1e40af; margin-bottom: 12px; font-size: 16px;">🎬 Video Sequence Summary (${frameCount} frames)</h3>
+      <p style="font-size: 15px; line-height: 1.7; color: #1e3a8a; font-weight: 500;">${summary}</p>
+    </div>
+  `;
+  
+  // Show individual frame captions in collapsible section
+  html += `
+    <details style="margin-bottom: 20px; padding: 12px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
+      <summary style="cursor: pointer; font-weight: 600; color: #374151; font-size: 14px; padding: 4px;">
+        📋 Individual Frame Details (${captions.length} frames)
+      </summary>
+      <div style="margin-top: 12px;">
+  `;
+  
+  captions.forEach((caption, i) => {
+    if (caption && !caption.startsWith('Frame') && !caption.startsWith('Error')) {
+      const timestamp = i * frameInterval;
+      html += `
+        <div style="margin-bottom: 10px; padding: 10px; background: white; border-left: 2px solid #60a5fa; border-radius: 4px;">
+          <p style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">[${timestamp}s] Frame ${i + 1}:</p>
+          <p style="font-size: 13px; color: #374151; line-height: 1.5;">${caption}</p>
+        </div>
+      `;
+    }
+  });
+  
+  html += `
+      </div>
+    </details>
+  `;
+  
+  const outputDiv = document.getElementById('output');
+  outputDiv.insertAdjacentHTML('afterbegin', html);
+  outputDiv.scrollTop = 0;
 }
 
 // Speak results
@@ -406,7 +717,7 @@ function speakResults(data) {
     const imageCount = data.image_descriptions.filter(item => 
       item.caption && !item.caption.includes('No valid')
     ).length;
-  
+    
     if (imageCount > 0) {
       textToSpeak += `Found ${imageCount} images. `;
       data.image_descriptions.forEach((item, i) => {
@@ -434,7 +745,7 @@ function speakResults(data) {
   }
 }
 
-// Speak function
+// Speak function (simple version without callback)
 function speak(text) {
   window.speechSynthesis.cancel();
   
@@ -463,4 +774,4 @@ function showError(message) {
     </p>`;
 }
 
-console.log('✅ ReadBuddy side panel loaded!');
+console.log('✅ ReadBuddy side panel loaded (v1.3.0 - Pause/Resume support)!');

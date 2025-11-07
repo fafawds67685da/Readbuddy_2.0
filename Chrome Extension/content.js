@@ -1,14 +1,53 @@
-// content.js - FIXED: Improved video element tracking and error recovery
+// content.js - MULTI-FRAME VIDEO ANALYSIS WITH PAUSE/RESUME
 
 // --- Video Analysis State ---
 let analysisInterval = null;
 let currentVideoElement = null;
-const ANALYSIS_INTERVAL_SECONDS = 30;
 let videoCheckInterval = null;
-let captureAttempts = 0;
-const MAX_CAPTURE_ATTEMPTS = 3;
 
-// --- Video Analysis Functions (CORS-Compatible) ---
+// Multi-frame capture state
+let frameBuffer = [];
+let captionBuffer = []; // NEW: Store captions as they arrive
+let expectedFrameCount = 0; // NEW: Track how many frames we expect
+let receivedFrameCount = 0; // NEW: Track how many captions received
+let capturedFrameCount = 0; // NEW: Track how many frames actually captured
+let captureIntervalSeconds = 5; // Default: capture every 5 seconds
+let analysisWindowSeconds = 30; // Default: analyze every 30 seconds
+let lastCaptureTime = 0;
+let analysisStartTime = 0;
+let isCapturingSequence = false;
+let isVideoPaused = false; // Track if we paused the video
+let wasPlayingBeforePause = false; // Track if video was playing before we paused it
+let shouldContinueAnalysis = true; // Flag to control whether to continue after TTS
+
+// SEGMENTED ANALYSIS: Track multi-segment videos
+let totalVideoDuration = 0; // Total video length in seconds
+let totalSegments = 0; // How many 30s segments (e.g., 4min14s = 9 segments)
+let currentSegment = 0; // Which segment we're currently analyzing (1, 2, 3...)
+let segmentStartTime = 0; // Video timestamp when current segment started
+
+// Backpressure and summarization control
+let inFlightCaptions = 0; // How many caption requests are in progress
+const maxConcurrentCaptions = 1; // Limit to 1 to avoid backlog on slow CPUs
+let summaryTriggered = false; // Ensure we only summarize once per window
+let windowEndTimestamp = 0; // When 30s window ended
+const postWindowGraceSeconds = 15; // Wait up to 15s for late captions (increased for slow backend)
+
+// --- Settings (loaded from storage) ---
+let captureMode = 'multi'; // 'single' or 'multi'
+let frameInterval = 5; // 3, 5, or 10 seconds
+
+// Load settings from chrome.storage
+chrome.storage.sync.get(['captureMode', 'frameInterval'], (result) => {
+  if (result.captureMode) captureMode = result.captureMode;
+  if (result.frameInterval) {
+    frameInterval = parseInt(result.frameInterval);
+    captureIntervalSeconds = frameInterval;
+  }
+  console.log(`📋 Settings loaded: mode=${captureMode}, interval=${frameInterval}s`);
+});
+
+// --- Video Analysis Functions ---
 function findViableVideo() {
   // Try YouTube-specific selector first
   let video = document.querySelector('video.html5-main-video');
@@ -28,24 +67,17 @@ function findViableVideo() {
   return video;
 }
 
-// NEW: Validate if video element is still valid
 function isVideoElementValid(video) {
   if (!video) return false;
-  
-  // Check if element is still in DOM
   if (!document.body.contains(video)) return false;
   
-  // Check if element has valid dimensions
   const rect = video.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return false;
-  
-  // Check if video has valid properties
   if (video.readyState === 0) return false;
   
   return true;
 }
 
-// NEW: Re-find video element if current one becomes invalid
 function ensureVideoElement() {
   if (isVideoElementValid(currentVideoElement)) {
     return currentVideoElement;
@@ -61,6 +93,113 @@ function ensureVideoElement() {
   }
   
   return currentVideoElement;
+}
+
+// NEW: Pause video for TTS narration
+function pauseVideoForNarration(video) {
+  if (!video || isVideoPaused) return;
+  
+  // Track if video was playing before we pause it
+  wasPlayingBeforePause = !video.paused;
+  
+  if (wasPlayingBeforePause) {
+    console.log("⏸️ Pausing video for TTS narration...");
+    video.pause();
+    isVideoPaused = true;
+    
+    // CRITICAL: Set window end timestamp when pausing (for grace period check)
+    if (!windowEndTimestamp) {
+      windowEndTimestamp = Date.now();
+      console.log(`⏱️ Window end timestamp set: ${windowEndTimestamp}`);
+    }
+    
+    // STOP countdown timer when video pauses for narration
+    chrome.runtime.sendMessage({ 
+      action: 'stopCountdown'
+    });
+  } else {
+    console.log("ℹ️ Video was already paused, not changing state");
+  }
+}
+
+// NEW: Resume video after TTS narration
+function resumeVideoAfterNarration(video) {
+  console.log(`🔍 resumeVideoAfterNarration called: video=${!!video}, isVideoPaused=${isVideoPaused}, currentSegment=${currentSegment}/${totalSegments}`);
+  
+  if (!video) {
+    console.error("❌ No video element provided to resumeVideoAfterNarration");
+    return;
+  }
+  
+  if (!isVideoPaused) {
+    console.warn("⚠️ Video is not paused, skipping resume");
+    return;
+  }
+  
+  // Check if there are more segments to analyze
+  const hasMoreSegments = currentSegment < totalSegments;
+  
+  if (hasMoreSegments) {
+    console.log(`🔄 Moving to next segment ${currentSegment + 1}/${totalSegments}...`);
+    
+    // Start next segment
+    currentSegment++;
+    segmentStartTime += analysisWindowSeconds; // Move forward by previous segment duration
+    
+    // Calculate next segment duration
+    const remainingDuration = totalVideoDuration - segmentStartTime;
+    analysisWindowSeconds = Math.min(remainingDuration, 30);
+    expectedFrameCount = Math.floor(analysisWindowSeconds / captureIntervalSeconds);
+    
+    // CRITICAL: Reset ALL segment state flags to allow analysis loop to continue
+    frameBuffer = [];
+    captionBuffer = [];
+    receivedFrameCount = 0;
+    capturedFrameCount = 0;
+    lastCaptureTime = 0;
+    analysisStartTime = Date.now(); // Reset countdown timer
+    summaryTriggered = false; // Allow next segment to trigger summarization
+    windowEndTimestamp = 0; // Clear pause timestamp
+    inFlightCaptions = 0; // Reset in-flight caption counter
+    
+    console.log(`📍 Segment ${currentSegment}/${totalSegments}: ${analysisWindowSeconds}s window, ${expectedFrameCount} frames`);
+    console.log(`🔄 State reset: capturedFrameCount=${capturedFrameCount}, receivedFrameCount=${receivedFrameCount}, windowEndTimestamp=${windowEndTimestamp}, summaryTriggered=${summaryTriggered}`);
+    
+    // Notify sidepanel of new segment
+    chrome.runtime.sendMessage({ 
+      action: 'videoAnalysisStarted',
+      duration: analysisWindowSeconds,
+      frameCount: expectedFrameCount,
+      segment: currentSegment,
+      totalSegments: totalSegments,
+      totalDuration: totalVideoDuration,
+      message: `Segment ${currentSegment}/${totalSegments}: ${analysisWindowSeconds}s window` 
+    });
+    
+    chrome.runtime.sendMessage({ 
+      action: 'videoAnalysisLoading', 
+      message: `Segment ${currentSegment}/${totalSegments}: Capturing ${expectedFrameCount} frames...` 
+    });
+  }
+  
+  // Only resume if video was playing before we paused it
+  if (wasPlayingBeforePause) {
+    console.log("▶️ Resuming video playback...");
+    video.play().catch(e => 
+      console.log("❌ Could not resume video:", e)
+    );
+  } else {
+    console.log("ℹ️ Video was not playing before pause, not resuming playback");
+  }
+  
+  isVideoPaused = false;
+  wasPlayingBeforePause = false;
+  console.log(`✅ Resume complete: isVideoPaused=${isVideoPaused}, hasMoreSegments=${hasMoreSegments}`);
+  
+  if (!hasMoreSegments) {
+    // All segments complete
+    console.log("✅ All segments analyzed. Video analysis complete!");
+  }
 }
 
 function startVideoAnalysisLoop() {
@@ -79,10 +218,65 @@ function startVideoAnalysisLoop() {
   }
   
   console.log("✅ Found video element:", currentVideoElement);
+  console.log(`🎬 Starting ${captureMode} mode analysis (interval: ${captureIntervalSeconds}s)`);
+  
+  // SEGMENTED ANALYSIS: Break video into 30s chunks
+  const videoDuration = currentVideoElement.duration;
+  
+  // CRITICAL FIX: Assign to GLOBAL variables, don't declare new local ones!
+  if (videoDuration && !isNaN(videoDuration) && videoDuration > 0) {
+    totalVideoDuration = Math.floor(videoDuration);
+    totalSegments = Math.ceil(totalVideoDuration / 30); // How many 30s segments (including partial)
+    currentSegment = 1;
+    segmentStartTime = 0;
+    
+    // Calculate first segment duration
+    const remainingDuration = totalVideoDuration - (segmentStartTime);
+    analysisWindowSeconds = Math.min(remainingDuration, 30);
+    
+    console.log(`📏 Video: ${totalVideoDuration}s total, ${totalSegments} segments (30s each + remainder)`);
+    console.log(`📍 Segment 1/${totalSegments}: ${analysisWindowSeconds}s window`);
+  } else {
+    // Fallback: single 30s segment
+    totalVideoDuration = 30;
+    totalSegments = 1;
+    currentSegment = 1;
+    segmentStartTime = 0;
+    analysisWindowSeconds = 30;
+    console.log(`⚠️ Video duration unknown, using single 30s segment`);
+  }
+  
+  // Reset state
+  frameBuffer = [];
+  captionBuffer = [];
+  receivedFrameCount = 0;
+  capturedFrameCount = 0;
+  expectedFrameCount = Math.floor(analysisWindowSeconds / captureIntervalSeconds);
+  lastCaptureTime = 0;
+  analysisStartTime = Date.now(); // CHANGED: Use wall clock time (countdown timer), not video time
+  isCapturingSequence = true;
+  isVideoPaused = false;
+  wasPlayingBeforePause = false;
+  inFlightCaptions = 0;
+  summaryTriggered = false;
+  windowEndTimestamp = 0;
+  
+  console.log(`📊 Expecting ${expectedFrameCount} frames over ${analysisWindowSeconds}s (interval: ${captureIntervalSeconds}s)`); // NEW: Log expected frame count
+  
+  // FIXED: Send message to start countdown timer in sidepanel
+  chrome.runtime.sendMessage({ 
+    action: 'videoAnalysisStarted',
+    duration: analysisWindowSeconds, // Send current segment duration
+    frameCount: expectedFrameCount,
+    segment: currentSegment,
+    totalSegments: totalSegments,
+    totalDuration: totalVideoDuration,
+    message: `Segment ${currentSegment}/${totalSegments}: Analyzing ${analysisWindowSeconds}s window` 
+  });
   
   chrome.runtime.sendMessage({ 
     action: 'videoAnalysisLoading', 
-    message: `Found video. Starting analysis every ${ANALYSIS_INTERVAL_SECONDS} seconds.` 
+    message: `Video ${totalVideoDuration}s - Segment ${currentSegment}/${totalSegments}: Capturing ${expectedFrameCount} frames over ${analysisWindowSeconds}s` 
   });
   
   // Try to play video if paused
@@ -92,15 +286,13 @@ function startVideoAnalysisLoop() {
     );
   }
   
-  let nextCaptureTime = Math.ceil(currentVideoElement.currentTime / ANALYSIS_INTERVAL_SECONDS) * ANALYSIS_INTERVAL_SECONDS;
-  
-  // NEW: Periodic video element validation (every 5 seconds)
+  // Periodic video element validation (every 5 seconds)
   videoCheckInterval = setInterval(() => {
     ensureVideoElement();
   }, 5000);
   
+  // Main analysis loop
   analysisInterval = setInterval(() => {
-    // NEW: Ensure video element is still valid before attempting capture
     const video = ensureVideoElement();
     
     if (!video) {
@@ -114,29 +306,97 @@ function startVideoAnalysisLoop() {
     }
     
     const currentTime = video.currentTime;
+    const countdownElapsed = (Date.now() - analysisStartTime) / 1000; // Elapsed time since countdown started (in seconds)
     
-    if (currentTime >= nextCaptureTime) {
-      video.pause();
+    // CRITICAL: Check grace period EVEN WHEN PAUSED (to trigger summarization)
+    if (isVideoPaused && windowEndTimestamp && !summaryTriggered) {
+      const waitedSec = (Date.now() - windowEndTimestamp) / 1000;
+      const haveAll = receivedFrameCount >= expectedFrameCount;
+      const graceElapsed = waitedSec >= postWindowGraceSeconds;
       
-      const timestamp = currentTime;
-      console.log(`📹 Capturing frame at ${Math.floor(timestamp)}s`);
+      console.log(`⏳ Grace check: paused=${isVideoPaused}, window=${!!windowEndTimestamp}, triggered=${summaryTriggered}, waited=${waitedSec.toFixed(1)}s/${postWindowGraceSeconds}s, received=${receivedFrameCount}/${expectedFrameCount}, haveAll=${haveAll}, graceElapsed=${graceElapsed}, bufferSize=${captionBuffer.length}`);
       
-      chrome.runtime.sendMessage({ 
-        action: 'videoAnalysisLoading', 
-        message: `Capturing frame at ${Math.floor(timestamp)}s...` 
-      });
+      if (haveAll || graceElapsed) {
+        console.log(`✅ Segment ${currentSegment}/${totalSegments} complete. Received: ${receivedFrameCount}/${expectedFrameCount}. Waited: ${waitedSec.toFixed(1)}s`);
+        summaryTriggered = true;
+        
+        chrome.runtime.sendMessage({ 
+          action: 'videoAnalysisLoading', 
+          message: `Segment ${currentSegment}/${totalSegments}: Summarizing ${captionBuffer.length} frames...` 
+        });
+        
+        // Send captions for summarization (use whatever we have)
+        sendCaptionsForSummarization(captionBuffer);
+        
+        // Check if there are more segments to analyze
+        if (currentSegment < totalSegments) {
+          console.log(`🔄 Next segment will start after TTS completes...`);
+        } else {
+          console.log("🛑 All segments analyzed. Will stop after TTS completes...");
+        }
+      }
+      return; // Don't continue - video is paused
+    }
+    
+    // Skip frame capture if video is paused (but grace period check above still runs)
+    if (isVideoPaused) {
+      return;
+    }
+    
+    // MULTI-FRAME MODE: Capture frames at intervals
+    if (captureMode === 'multi') {
+      const timeSinceLastCapture = countdownElapsed - lastCaptureTime; // Based on countdown, not video time
       
-      // Reset capture attempts
-      captureAttempts = 0;
-      
-      // Use CORS-compatible capture method with retry logic
-      captureVideoFrameCORS(video, timestamp);
-      
-      nextCaptureTime += ANALYSIS_INTERVAL_SECONDS;
+      // FIXED: Capture frame at interval - REMOVED BACKPRESSURE
+      // Let all frames queue up, backend processes them sequentially
+      if (timeSinceLastCapture >= captureIntervalSeconds && capturedFrameCount < expectedFrameCount) {
+        capturedFrameCount++; // Increment captured frame count
+        console.log(`📸 Capturing frame ${capturedFrameCount}/${expectedFrameCount} at countdown ${Math.floor(countdownElapsed)}s (video: ${Math.floor(currentTime)}s)`);
+        
+        chrome.runtime.sendMessage({ 
+          action: 'videoAnalysisLoading', 
+          message: `Capturing and analyzing frame ${capturedFrameCount}/${expectedFrameCount} at ${Math.floor(countdownElapsed)}s...` 
+        });
+        
+        // Send frame immediately for captioning (parallel processing)
+        captureAndSendFrameImmediately(video, currentTime, capturedFrameCount - 1); // Pass 0-indexed frameIndex
+        
+        // FIXED: Use target time instead of actual time to prevent drift
+        // e.g., frame 1 at 5s, frame 2 at 10s, frame 3 at 15s (not 5.2s, 10.3s, 15.1s)
+        lastCaptureTime = capturedFrameCount * captureIntervalSeconds;
+      }
+    
+      // FIXED: Increased timeout to 60s to allow all frames to be captured
+      // Pause video when ALL frames captured OR 60s countdown elapsed (safety timeout)
+      const safetyTimeout = 60; // 60s safety buffer for slow processing
+      if (capturedFrameCount >= expectedFrameCount || countdownElapsed >= safetyTimeout) {
+        // PAUSE VIDEO when all frames captured OR safety timeout
+        // windowEndTimestamp is set inside pauseVideoForNarration()
+        pauseVideoForNarration(video);
+        
+        console.log(`🎬 Analysis complete: ${capturedFrameCount}/${expectedFrameCount} frames at ${Math.floor(countdownElapsed)}s countdown. Waiting up to ${postWindowGraceSeconds}s for pending captions...`);
+      }
+    } 
+    // SINGLE-FRAME MODE: Capture one frame at 30s countdown mark
+    else {
+      if (countdownElapsed >= analysisWindowSeconds) {
+        console.log(`📹 Capturing single frame at countdown ${Math.floor(countdownElapsed)}s (video: ${Math.floor(currentTime)}s)`);
+        
+        // PAUSE VIDEO BEFORE ANALYSIS
+        pauseVideoForNarration(video);
+        
+        chrome.runtime.sendMessage({ 
+          action: 'videoAnalysisLoading', 
+          message: `Capturing frame at ${Math.floor(countdownElapsed)}s...` 
+        });
+        
+        captureFrameNonDisruptive(video, currentTime, true); // true = single mode
+        // Note: Don't reset analysisStartTime here - wait for TTS completion
+      }
     }
   }, 1000);
   
-  console.log("✅ Video analysis loop started (CORS-compatible mode)");
+  console.log("✅ Video analysis loop started (pause/resume enabled)");
 }
 
 function stopVideoAnalysisLoop() {
@@ -146,186 +406,180 @@ function stopVideoAnalysisLoop() {
     console.log("🛑 Video analysis loop stopped.");
   }
   
-  // NEW: Clear video check interval
   if (videoCheckInterval) {
     clearInterval(videoCheckInterval);
     videoCheckInterval = null;
   }
   
-  if (currentVideoElement) {
-    console.log("⏸️ Video remains paused.");
+  // Resume video if it was paused by us
+  if (isVideoPaused && currentVideoElement) {
+    resumeVideoAfterNarration(currentVideoElement);
   }
   
   // Reset state
-  captureAttempts = 0;
+  frameBuffer = [];
+  captionBuffer = []; // NEW: Reset caption buffer
+  receivedFrameCount = 0; // NEW: Reset
+  expectedFrameCount = 0; // NEW: Reset
+  isCapturingSequence = false;
+  lastCaptureTime = 0;
+  analysisStartTime = 0;
+  isVideoPaused = false;
+  wasPlayingBeforePause = false;
 }
 
-// IMPROVED: Better error handling and retry logic
-async function captureVideoFrameCORS(video, timestamp) {
+// NON-DISRUPTIVE FRAME CAPTURE (no pausing!)
+function captureFrameNonDisruptive(video, timestamp, isSingleMode = false) {
   try {
-    // Validate video element one more time before capture
     if (!isVideoElementValid(video)) {
       throw new Error("Video element is no longer valid");
     }
     
-    let imageData = null;
+    const rect = video.getBoundingClientRect();
     
-    // Method 1: Try canvas capture (works for same-origin videos)
-    try {
-      imageData = captureWithCanvas(video);
-      console.log("✅ Canvas capture successful");
-    } catch (canvasError) {
-      console.log("⚠️ Canvas blocked by CORS, trying MediaStream...");
-      
-      // Method 2: Use MediaStream API (works for YouTube)
-      try {
-        imageData = await captureWithMediaStream(video);
-        console.log("✅ MediaStream capture successful");
-      } catch (streamError) {
-        console.log("⚠️ MediaStream failed, trying screenshot...");
-        
-        // Method 3: Use Chrome's captureVisibleTab (most reliable)
-        imageData = await captureWithScreenshot(video);
-        console.log("✅ Screenshot capture successful");
+    // Use screenshot API to capture while video plays
+    chrome.runtime.sendMessage(
+      { 
+        action: "captureVisibleTab",
+        videoRect: {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        }
+      },
+      (response) => {
+        if (response && response.imageData) {
+          cropImageToVideo(response.imageData, rect)
+            .then(croppedFrame => {
+              if (isSingleMode) {
+                // Send single frame immediately to old endpoint
+                sendSingleFrameToBackend(croppedFrame, timestamp);
+              } else {
+                // Add to buffer for batch processing
+                frameBuffer.push(croppedFrame);
+                console.log(`✅ Frame ${frameBuffer.length} captured and buffered`);
+              }
+            })
+            .catch(error => {
+              console.error("❌ Error cropping frame:", error);
+            });
+        } else {
+          console.error("❌ Screenshot capture failed:", response?.error || "Unknown error");
+        }
       }
-    }
-    
-    if (!imageData) {
-      throw new Error("All capture methods failed");
-    }
-    
-    chrome.runtime.sendMessage({ 
-      action: 'videoAnalysisLoading', 
-      message: `Frame captured at ${Math.floor(timestamp)}s. Analyzing with AI...` 
-    });
-    
-    await sendFrameToBackend(imageData, timestamp);
-    
+    );
   } catch (error) {
-    console.error("❌ Error capturing video frame:", error);
-    
-    // NEW: Retry logic
-    captureAttempts++;
-    
-    if (captureAttempts < MAX_CAPTURE_ATTEMPTS) {
-      console.log(`🔄 Retrying capture (attempt ${captureAttempts + 1}/${MAX_CAPTURE_ATTEMPTS})...`);
-      
-      chrome.runtime.sendMessage({ 
-        action: 'videoAnalysisLoading', 
-        message: `Capture failed, retrying (${captureAttempts}/${MAX_CAPTURE_ATTEMPTS})...` 
-      });
-      
-      // Wait 2 seconds before retry
-      setTimeout(() => {
-        captureVideoFrameCORS(video, timestamp);
-      }, 2000);
-      
-    } else {
-      // Max retries reached, report error but don't stop the loop
-      chrome.runtime.sendMessage({ 
-        action: 'videoAnalysisError', 
-        message: `Frame capture failed after ${MAX_CAPTURE_ATTEMPTS} attempts. Continuing with next interval...` 
-      });
-      
-      // Reset attempts for next capture
-      captureAttempts = 0;
-      
-      // Resume video playback
-      if (video && !video.paused) {
-        video.play().catch(e => console.log("Could not resume video:", e));
-      }
-    }
+    console.error("❌ Error in captureFrameNonDisruptive:", error);
   }
 }
 
-// Method 1: Canvas capture (fastest but CORS-restricted)
-function captureWithCanvas(video) {
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  
-  // This will throw if CORS-protected
-  return canvas.toDataURL('image/jpeg', 0.8);
-}
-
-// Method 2: MediaStream capture (works with YouTube)
-async function captureWithMediaStream(video) {
-  return new Promise((resolve, reject) => {
-    try {
-      const stream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
-      
-      if (!stream) {
-        reject(new Error("captureStream not supported"));
-        return;
-      }
-      
-      const track = stream.getVideoTracks()[0];
-      if (!track) {
-        reject(new Error("No video track available"));
-        return;
-      }
-      
-      const imageCapture = new ImageCapture(track);
-      
-      imageCapture.grabFrame()
-        .then(imageBitmap => {
-          const canvas = document.createElement('canvas');
-          canvas.width = imageBitmap.width;
-          canvas.height = imageBitmap.height;
-          
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(imageBitmap, 0, 0);
-          
-          const imageData = canvas.toDataURL('image/jpeg', 0.8);
-          
-          track.stop();
-          
-          resolve(imageData);
-        })
-        .catch(reject);
-        
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-// Method 3: Screenshot capture (most reliable)
-async function captureWithScreenshot(video) {
-  return new Promise((resolve, reject) => {
-    try {
-      const rect = video.getBoundingClientRect();
-      
-      chrome.runtime.sendMessage(
-        { 
-          action: "captureVisibleTab",
-          videoRect: {
-            x: rect.left,
-            y: rect.top,
-            width: rect.width,
-            height: rect.height
-          }
-        },
-        (response) => {
-          if (response && response.imageData) {
-            cropImageToVideo(response.imageData, rect)
-              .then(resolve)
-              .catch(reject);
-          } else {
-            reject(new Error(response?.error || "Screenshot capture failed"));
-          }
+// NEW: Capture frame and send immediately for parallel processing
+async function captureAndSendFrameImmediately(video, timestamp, frameIndex) {
+  try {
+    const rect = video.getBoundingClientRect();
+    
+    // Request background to capture visible tab
+    chrome.runtime.sendMessage({ action: 'captureVisibleTab' }, 
+      async (response) => {
+        if (response && response.imageData) {
+          // Crop to video area
+          cropImageToVideo(response.imageData, rect)
+            .then(async (croppedFrame) => {
+              console.log(`🚀 Frame ${frameIndex + 1} captured, sending immediately for caption...`);
+              
+              // Send frame to backend for caption generation
+              inFlightCaptions++;
+              const captionResult = await chrome.runtime.sendMessage({
+                action: 'analyzeFrameForCaption',
+                imageData: croppedFrame,
+                frameIndex: frameIndex
+              });
+              
+              if (captionResult && captionResult.success) {
+                const caption = captionResult.caption;
+                console.log(`✅ Caption ${frameIndex + 1} received: "${caption}"`);
+                
+                // Store caption in buffer
+                captionBuffer.push(caption);
+                receivedFrameCount++;
+                
+                // FIXED: Don't send for summarization here - let analysis loop handle it
+                // This prevents double TTS narration
+                if (receivedFrameCount >= expectedFrameCount) {
+                  console.log(`🎉 All ${expectedFrameCount} captions received! Waiting for analysis loop to trigger summarization...`);
+                }
+              } else {
+                console.error(`❌ Failed to get caption for frame ${frameIndex + 1}:`, captionResult?.error);
+              }
+              inFlightCaptions = Math.max(0, inFlightCaptions - 1);
+            })
+            .catch(error => {
+              console.error(`❌ Error cropping frame ${frameIndex + 1}:`, error);
+            });
+        } else {
+          console.error(`❌ Screenshot capture failed for frame ${frameIndex + 1}:`, response?.error || "Unknown error");
         }
-      );
-    } catch (error) {
-      reject(error);
-    }
-  });
+      }
+    );
+  } catch (error) {
+    console.error(`❌ Error capturing frame ${frameIndex + 1}:`, error);
+  }
 }
 
-// Helper: Crop screenshot to video area
+// NEW: Send all collected captions to backend for summarization
+async function sendCaptionsForSummarization(captions) {
+  try {
+    console.log(`📤 Sending ${captions.length} captions for summarization...`);
+    
+    const summaryResult = await chrome.runtime.sendMessage({
+      action: 'summarizeCaptions',
+      captions: captions
+    });
+    
+    if (summaryResult && summaryResult.success) {
+      const summary = summaryResult.summary;
+      
+      console.log("✅ Video sequence summary complete");
+      console.log(`📝 Summary: ${summary}`);
+      
+      // Send to side panel
+        chrome.runtime.sendMessage({ 
+          action: 'videoSequenceAnalyzed', 
+          summary: summary,
+          captions: captions,
+          frameCount: captions.length
+        });
+      
+    } else {
+      const errorMessage = summaryResult ? (summaryResult.error || "Unknown summarization error.") : "No response from background service.";
+      
+      console.error("❌ Summarization Failed:", errorMessage);
+      
+      // Send error summary to sidepanel - let sidepanel handle TTS and resume
+      chrome.runtime.sendMessage({ 
+        action: 'videoSequenceAnalyzed', 
+        summary: `Analysis error: ${errorMessage}. Moving to next segment.`,
+        captions: [],
+        frameCount: 0,
+        isError: true
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error in summarization:", error);
+    
+    // Send error summary to sidepanel - let sidepanel handle TTS and resume
+    chrome.runtime.sendMessage({ 
+      action: 'videoSequenceAnalyzed', 
+      summary: `Summarization error: ${error.message}. Moving to next segment.`,
+      captions: [],
+      frameCount: 0,
+      isError: true
+    });
+  }
+}
+
+// Crop screenshot to video area
 async function cropImageToVideo(imageData, rect) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -348,8 +602,8 @@ async function cropImageToVideo(imageData, rect) {
   });
 }
 
-// Send frame to backend via background script
-async function sendFrameToBackend(imageData, timestamp) {
+// Send single frame to backend (original behavior)
+async function sendSingleFrameToBackend(imageData, timestamp) {
   try {
     const analysisResult = await chrome.runtime.sendMessage({
       action: 'analyzeVideoFrame', 
@@ -362,30 +616,90 @@ async function sendFrameToBackend(imageData, timestamp) {
       chrome.runtime.sendMessage({ 
         action: 'videoAnalysisUpdate', 
         description: description, 
-        timestamp: timestamp 
+        timestamp: timestamp,
+        mode: 'single'
       });
-      
-      // Reset capture attempts on success
-      captureAttempts = 0;
       
     } else {
       const errorMessage = analysisResult ? (analysisResult.error || "Unknown AI analysis error.") : "No response from background service.";
       
-      // Don't stop the loop, just log the error
       console.error("❌ AI Analysis Failed:", errorMessage);
       
       chrome.runtime.sendMessage({ 
         action: 'videoAnalysisError', 
-        message: `AI Analysis Failed: ${errorMessage}. Continuing...` 
+        message: `AI Analysis Failed: ${errorMessage}` 
       });
+      
+      // Resume video even on error
+      if (currentVideoElement) {
+        resumeVideoAfterNarration(currentVideoElement);
+      }
     }
   } catch (error) {
-    console.error("❌ Error sending frame to backend:", error);
-    
+    console.error("❌ Error sending single frame:", error);
     chrome.runtime.sendMessage({ 
       action: 'videoAnalysisError', 
-      message: `Communication error: ${error.message}. Continuing...` 
+      message: `Communication error: ${error.message}` 
     });
+    
+    // Resume video even on error
+    if (currentVideoElement) {
+      resumeVideoAfterNarration(currentVideoElement);
+    }
+  }
+}
+
+// Send frame sequence to backend for batch analysis
+async function sendFrameSequenceToBackend(frames) {
+  try {
+    console.log(`📤 Sending ${frames.length} frames to backend for analysis...`);
+    
+    const analysisResult = await chrome.runtime.sendMessage({
+      action: 'analyzeVideoSequence', 
+      frames: frames
+    });
+    
+    if (analysisResult && analysisResult.success) {
+      const { summary, individual_captions } = analysisResult.result;
+      
+      console.log("✅ Video sequence analysis complete");
+      console.log("Summary:", summary);
+      
+      chrome.runtime.sendMessage({ 
+        action: 'videoSequenceAnalyzed', 
+        summary: summary,
+        captions: individual_captions,
+        frameCount: frames.length
+      });
+      
+      // Note: Video will resume after TTS completes in sidepanel
+      
+    } else {
+      const errorMessage = analysisResult ? (analysisResult.error || "Unknown error") : "No response from backend";
+      
+      console.error("❌ Video sequence analysis failed:", errorMessage);
+      
+      chrome.runtime.sendMessage({ 
+        action: 'videoAnalysisError', 
+        message: `Sequence analysis failed: ${errorMessage}` 
+      });
+      
+      // Resume video even on error
+      if (currentVideoElement) {
+        resumeVideoAfterNarration(currentVideoElement);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error sending frame sequence:", error);
+    chrome.runtime.sendMessage({ 
+      action: 'videoAnalysisError', 
+      message: `Communication error: ${error.message}` 
+    });
+    
+    // Resume video even on error
+    if (currentVideoElement) {
+      resumeVideoAfterNarration(currentVideoElement);
+    }
   }
 }
 
@@ -410,12 +724,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       stopVideoAnalysisLoop();
       sendResponse({ success: true });
       break;
-    case 'continueVideoPlayback':
-      if (currentVideoElement && isVideoElementValid(currentVideoElement)) {
-        currentVideoElement.play();
-        console.log("▶️ Video resumed after analysis.");
+    case 'updateVideoSettings':
+      // Update settings from side panel
+      if (request.captureMode) {
+        captureMode = request.captureMode;
       }
+      if (request.frameInterval) {
+        frameInterval = parseInt(request.frameInterval);
+        captureIntervalSeconds = frameInterval;
+      }
+      console.log(`⚙️ Settings updated: mode=${captureMode}, interval=${frameInterval}s`);
       sendResponse({ success: true });
+      break;
+    case 'resumeVideo':
+      // NEW: Resume video after TTS completes
+      console.log("▶️ Received resumeVideo command from sidepanel");
+      if (currentVideoElement) {
+        resumeVideoAfterNarration(currentVideoElement);
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: "No video element found" });
+      }
       break;
   }
   return true;
@@ -932,4 +1261,4 @@ ReadBuddyScreenReader.prototype.stopSpeaking = function() {
 
 var readBuddy = new ReadBuddyScreenReader();
 
-console.log('✅ ReadBuddy loaded! Press Ctrl+Alt+R or click the bubble button.');
+console.log('✅ ReadBuddy loaded! Press Ctrl+Alt+R or click the bubble button (v1.3.0 - Pause/Resume)');

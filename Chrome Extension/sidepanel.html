@@ -127,13 +127,19 @@
       transform: translateY(0);
     }
 
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
     .btn-primary {
       background: #2563eb;
       color: white;
       font-size: 16px;
     }
 
-    .btn-primary:hover {
+    .btn-primary:hover:not(:disabled) {
       background: #1d4ed8;
     }
 
@@ -142,17 +148,17 @@
       color: #374151;
     }
 
-    .btn-secondary:hover {
+    .btn-secondary:hover:not(:disabled) {
       background: #e5e7eb;
     }
     
-    .btn-special { /* New style for the video analysis button */
+    .btn-special {
       background: #059669;
       color: white;
       font-size: 16px;
     }
     
-    .btn-special:hover {
+    .btn-special:hover:not(:disabled) {
       background: #047857;
     }
 
@@ -161,7 +167,7 @@
       color: white;
     }
 
-    .btn-danger:hover {
+    .btn-danger:hover:not(:disabled) {
       background: #dc2626;
     }
 
@@ -179,6 +185,7 @@
     .setting-item label {
       font-size: 13px;
       color: #6b7280;
+      flex: 1;
     }
 
     input[type="range"] {
@@ -203,6 +210,23 @@
       width: 18px;
       height: 18px;
       cursor: pointer;
+    }
+
+    select {
+      padding: 6px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: white;
+      font-size: 13px;
+      color: #374151;
+      cursor: pointer;
+      outline: none;
+      min-width: 140px;
+    }
+
+    select:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
     }
 
     .speed-display {
@@ -304,20 +328,48 @@
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+
+    /* New: Video settings highlight */
+    .video-settings {
+      background: #f0fdf4;
+      border-left: 3px solid #059669;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+
+    .video-settings h4 {
+      font-size: 13px;
+      color: #065f46;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+
+    details {
+      cursor: pointer;
+    }
+
+    details summary {
+      user-select: none;
+    }
+
+    details summary:hover {
+      color: #2563eb;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
       <h1>🔊 ReadBuddy</h1>
-      <p>AI-Powered Screen Reader - Always Here to Help</p>
+      <p>AI-Powered Screen Reader - Multi-Frame Video Analysis</p>
     </div>
 
     <div class="status-bar">
       <div class="status-indicator">
         <div class="status-dot"></div>
         <span>Ready to assist</span>
-        </div>
+      </div>
       <span id="pageInfo" style="font-size: 11px; color: #9ca3af;">No page selected</span>
     </div>
 
@@ -327,7 +379,7 @@
       </div>
 
       <div class="section">
-        <h3>⚙️ Settings</h3>
+        <h3>⚙️ General Settings</h3>
         
         <div class="setting-item">
           <label>🎤 Speech Speed</label>
@@ -344,7 +396,51 @@
       </div>
 
       <div class="section">
+        <div class="video-settings">
+          <h4>🎬 Video Analysis Settings</h4>
+          
+          <div class="setting-item">
+            <label for="captureMode">Capture Mode</label>
+            <select id="captureMode">
+              <option value="single">Single Frame</option>
+              <option value="multi" selected>Multi-Frame Sequence</option>
+            </select>
+          </div>
+
+          <div class="setting-item">
+            <label for="frameInterval">Frame Interval</label>
+            <select id="frameInterval">
+              <option value="3">Every 3 seconds</option>
+              <option value="5" selected>Every 5 seconds</option>
+              <option value="10">Every 10 seconds</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="font-size: 11px; color: #6b7280; padding: 8px; background: #f9fafb; border-radius: 4px;">
+          <strong>Single Frame:</strong> Captures 1 frame at 30s mark<br>
+          <strong>Multi-Frame:</strong> Captures multiple frames, generates detailed summary
+        </div>
+      </div>
+
+      <div class="section">
         <h3>🎯 Quick Actions</h3>
+        
+        <!-- Countdown Timer Display -->
+        <div id="countdownDisplay" style="display: none; background: #eff6ff; border: 2px solid #2563eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; text-align: center;">
+          <div style="font-size: 13px; color: #1e40af; margin-bottom: 8px; font-weight: 600;">
+            ⏱️ Next Video Analysis
+          </div>
+          <div id="countdownText" style="font-size: 32px; font-weight: 700; color: #2563eb; margin-bottom: 8px;">
+            30s
+          </div>
+          <div id="countdownProgressBar" style="width: 100%; height: 8px; background: #dbeafe; border-radius: 4px; overflow: hidden;">
+            <div id="countdownProgress" style="width: 100%; height: 100%; background: linear-gradient(90deg, #2563eb, #1d4ed8); transition: width 1s linear;"></div>
+          </div>
+          <div style="font-size: 11px; color: #6b7280; margin-top: 8px;">
+            Video will pause automatically for narration
+          </div>
+        </div>
         
         <div class="controls">
           <button id="analyzeBtn" class="btn-primary">
@@ -354,10 +450,8 @@
           
           <button id="analyzeVideoBtn" class="btn-special">
             <span class="icon">👁️‍🗨️</span>
-            <span>Video Visuals Analysis (30s)</span>
+            <span>Multi-Frame Video Analysis (5s intervals)</span>
           </button>
-
-          <!-- Toggle Screen Reader button removed -->
 
           <button id="stopBtn" class="btn-danger">
             <span class="icon">⏹️</span>
@@ -371,7 +465,7 @@
         </div>
       </div>
       
-            <div class="section">
+      <div class="section">
         <h3>📄 Analysis Results</h3>
         <div class="loading" id="loading">
           <div class="spinner"></div>

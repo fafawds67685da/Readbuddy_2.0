@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "ReadBuddy AI Screen Reader",
-    "version": "1.1.0",
-    "description": "AI-powered summarization, CORS-compatible video visual analysis, and screen reading.",
+    "version": "1.2.0",
+    "description": "AI-powered summarization, multi-frame video visual analysis with T5 summarization, and screen reading.",
     
     "action": {
         "default_title": "ReadBuddy - AI Screen Reader"
