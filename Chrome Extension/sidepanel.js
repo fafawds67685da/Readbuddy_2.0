@@ -2,6 +2,7 @@
 
 let speechRate = 1.0;
 let autoSpeak = true;
+let autoOpenOnStartup = true; // NEW: Auto-open on startup setting
 let lastResults = null;
 let isVideoAnalyzing = false;
 let isProcessing = false;
@@ -16,15 +17,17 @@ let remainingSeconds = 30;
 let isTTSSpeaking = false; // Flag to prevent duplicate resume commands
 
 // Load saved settings
-chrome.storage.sync.get(['speechRate', 'autoSpeak', 'captureMode', 'frameInterval'], (result) => {
+chrome.storage.sync.get(['speechRate', 'autoSpeak', 'autoOpenOnStartup', 'captureMode', 'frameInterval'], (result) => {
   speechRate = result.speechRate || 1.0;
   autoSpeak = result.autoSpeak !== false;
+  autoOpenOnStartup = result.autoOpenOnStartup !== false; // NEW
   captureMode = result.captureMode || 'multi';
   frameInterval = result.frameInterval || 5;
   
   document.getElementById('speedSlider').value = speechRate;
   document.getElementById('speedValue').textContent = speechRate.toFixed(1) + 'x';
   document.getElementById('autoSpeak').checked = autoSpeak;
+  document.getElementById('autoOpenOnStartup').checked = autoOpenOnStartup; // NEW
   document.getElementById('captureMode').value = captureMode;
   document.getElementById('frameInterval').value = frameInterval;
   
@@ -566,6 +569,13 @@ document.getElementById('speedSlider').addEventListener('input', (e) => {
 document.getElementById('autoSpeak').addEventListener('change', (e) => {
   autoSpeak = e.target.checked;
   chrome.storage.sync.set({ autoSpeak });
+});
+
+// Auto-open on startup toggle
+document.getElementById('autoOpenOnStartup').addEventListener('change', (e) => {
+  autoOpenOnStartup = e.target.checked;
+  chrome.storage.sync.set({ autoOpenOnStartup });
+  console.log('⚙️ Auto-open on startup:', autoOpenOnStartup);
 });
 
 // NEW: Capture mode dropdown

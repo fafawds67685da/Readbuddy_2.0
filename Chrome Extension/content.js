@@ -1,5 +1,12 @@
 // content.js - MULTI-FRAME VIDEO ANALYSIS WITH PAUSE/RESUME
 
+// Prevent multiple injections
+if (window.__READBUDDY_LOADED__) {
+  console.log('⚠️ ReadBuddy already loaded, skipping re-injection');
+  // Don't throw error, just exit silently
+} else {
+  window.__READBUDDY_LOADED__ = true;
+
 // --- Video Analysis State ---
 let analysisInterval = null;
 let currentVideoElement = null;
@@ -543,6 +550,35 @@ async function sendCaptionsForSummarization(captions) {
       console.log("✅ Video sequence summary complete");
       console.log(`📝 Summary: ${summary}`);
       
+      // Speak the summary immediately (for keyboard shortcut users)
+      console.log("🔊 Speaking video summary via TTS");
+      
+      // Create utterance with proper event handlers
+      const utterance = new SpeechSynthesisUtterance(summary);
+      utterance.rate = 1.1;
+      utterance.lang = 'en-US';
+      
+      utterance.onstart = () => {
+        console.log("✅ Video summary TTS started");
+      };
+      
+      utterance.onend = () => {
+        console.log("✅ Video summary TTS finished, resuming video...");
+        if (currentVideoElement) {
+          resumeVideoAfterNarration(currentVideoElement);
+        }
+      };
+      
+      utterance.onerror = (e) => {
+        console.error("❌ TTS error during video summary:", e);
+        // Resume video even if TTS fails
+        if (currentVideoElement) {
+          resumeVideoAfterNarration(currentVideoElement);
+        }
+      };
+      
+      speechSynthesis.speak(utterance);
+      
       // Send to side panel
         chrome.runtime.sendMessage({ 
           action: 'videoSequenceAnalyzed', 
@@ -556,6 +592,14 @@ async function sendCaptionsForSummarization(captions) {
       
       console.error("❌ Summarization Failed:", errorMessage);
       
+      // Speak error and resume video
+      speak(`Analysis error: ${errorMessage}`);
+      setTimeout(() => {
+        if (currentVideoElement) {
+          resumeVideoAfterNarration(currentVideoElement);
+        }
+      }, 3000);
+      
       // Send error summary to sidepanel - let sidepanel handle TTS and resume
       chrome.runtime.sendMessage({ 
         action: 'videoSequenceAnalyzed', 
@@ -567,6 +611,14 @@ async function sendCaptionsForSummarization(captions) {
     }
   } catch (error) {
     console.error("❌ Error in summarization:", error);
+    
+    // Speak error and resume video
+    speak(`Summarization error: ${error.message}`);
+    setTimeout(() => {
+      if (currentVideoElement) {
+        resumeVideoAfterNarration(currentVideoElement);
+      }
+    }, 3000);
     
     // Send error summary to sidepanel - let sidepanel handle TTS and resume
     chrome.runtime.sendMessage({ 
@@ -746,9 +798,307 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: "No video element found" });
       }
       break;
+    
+    // KEYBOARD SHORTCUTS
+    case 'summarize_page':
+      console.log("📄 Summarize page command received");
+      speak("Summarizing page. Please wait.");
+      summarizePage();
+      sendResponse({ success: true });
+      break;
+    
+    case 'describe_images':
+      console.log("🖼️ Describe images command received");
+      speak("Describing images on this page.");
+      describeImages();
+      sendResponse({ success: true });
+      break;
+    
+    case 'summarize_video':
+      console.log("🎬 Summarize video command received");
+      speak("Summarizing video content.");
+      summarizeVideo();
+      sendResponse({ success: true });
+      break;
+    
+    case 'stop_speaking':
+      console.log("🔇 Stop speaking command received");
+      stopSpeaking();
+      sendResponse({ success: true });
+      break;
   }
   return true;
 });
+
+// --- Keyboard Command Helper Functions ---
+
+// Debounce mechanism to prevent multiple rapid executions
+let lastCommandTime = {};
+const COMMAND_COOLDOWN = 1000; // 1 second cooldown between commands
+
+/**
+ * Check if command can be executed (debounce check)
+ */
+function canExecuteCommand(commandName) {
+  const now = Date.now();
+  const lastTime = lastCommandTime[commandName] || 0;
+  
+  if (now - lastTime < COMMAND_COOLDOWN) {
+    console.log(`⏳ Command "${commandName}" on cooldown, ignoring...`);
+    return false;
+  }
+  
+  lastCommandTime[commandName] = now;
+  return true;
+}
+
+/**
+ * Text-to-speech helper for keyboard commands
+ */
+function speak(text) {
+  console.log("🔊 TTS speak() called with:", text?.substring(0, 100) + "...");
+  console.log("🔊 speechSynthesis available:", typeof speechSynthesis !== 'undefined');
+  console.log("🔊 speechSynthesis.speaking:", speechSynthesis.speaking);
+  
+  if (!text || text.trim().length === 0) {
+    console.error("❌ No text to speak!");
+    return;
+  }
+  
+  // Cancel any ongoing speech first
+  speechSynthesis.cancel();
+  
+  // Small delay to ensure cancel completes
+  setTimeout(() => {
+    const msg = new SpeechSynthesisUtterance(text);
+    msg.rate = 1.1;
+    msg.lang = 'en-US';
+    msg.volume = 1.0;
+    
+    msg.onstart = () => console.log("✅ TTS started speaking");
+    msg.onend = () => console.log("✅ TTS finished speaking");
+    msg.onerror = (e) => {
+      console.error("❌ TTS error:", e);
+      if (e.error === 'not-allowed') {
+        console.error("⚠️ TTS blocked: User interaction required. Please click on the page first, then try again.");
+        // Try to show a notification as fallback
+        showNotification("Please click on the page first, then press the shortcut again to enable text-to-speech.");
+      }
+    };
+    
+    speechSynthesis.speak(msg);
+    console.log("🔊 TTS speak() command issued");
+  }, 10);
+}
+
+/**
+ * Show a visual notification when TTS is blocked
+ */
+function showNotification(message) {
+  // Create a simple notification div
+  const notification = document.createElement('div');
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #ff6b6b;
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    z-index: 999999;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    max-width: 300px;
+  `;
+  notification.textContent = message;
+  document.body.appendChild(notification);
+  
+  // Remove after 5 seconds
+  setTimeout(() => {
+    notification.style.transition = 'opacity 0.5s';
+    notification.style.opacity = '0';
+    setTimeout(() => notification.remove(), 500);
+  }, 5000);
+}
+
+/**
+ * Stop all text-to-speech
+ */
+function stopSpeaking() {
+  console.log("🔇 Stopping all speech...");
+  speechSynthesis.cancel(); // Stop all ongoing speech
+  console.log("✅ Speech stopped");
+}
+
+/**
+ * Summarize the current page content
+ */
+async function summarizePage() {
+  // Extract main content from page
+  const pageText = document.body.innerText || document.body.textContent;
+  const truncatedText = pageText.substring(0, 5000); // Limit to first 5000 chars
+  
+  console.log("📄 Extracting page content:", truncatedText.length, "characters");
+  
+  if (!truncatedText.trim()) {
+    speak("No text found on this page.");
+    return;
+  }
+  
+  try {
+    speak("Analyzing page content. Please wait.");
+    
+    // Send to background.js instead of direct fetch (to avoid CORS)
+    chrome.runtime.sendMessage({
+      action: 'analyzePage',
+      text: truncatedText
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error("❌ Message error:", chrome.runtime.lastError);
+        speak("Failed to communicate with extension.");
+        return;
+      }
+      
+      if (!response || !response.success) {
+        console.error("❌ Backend error:", response?.error);
+        speak("Failed to summarize page. Make sure the backend server is running.");
+        return;
+      }
+      
+      console.log("✅ Page summarization result:", response.result);
+      
+      // Speak the summary - backend returns 'summaries' array, not 'text_summary'
+      if (response.result.summaries && response.result.summaries.length > 0) {
+        const summary = response.result.summaries.join(" ");
+        console.log("📢 Speaking summary:", summary);
+        speak(summary);
+      } else {
+        speak("Could not generate summary.");
+      }
+    });
+    
+  } catch (error) {
+    console.error("❌ Page summarization error:", error);
+    speak("Failed to summarize page.");
+  }
+}
+
+/**
+ * Describe all images on the current page
+ * Uses the EXACT same logic as the "Analyze Page" button in sidepanel
+ */
+async function describeImages() {
+  console.log("🖼️ Starting image analysis using EXACT sidepanel button logic...");
+  
+  // EXACT SAME extraction as sidepanel's analyzeBtn (lines 518-544)
+  const text = document.body.innerText.slice(0, 4000);
+  
+  const images = Array.from(document.images)
+    .filter(img => {
+      const src = img.src || '';
+      const isValidSize = img.width > 100 && img.height > 100;
+      const isHttp = src.startsWith('http');
+      return isValidSize && isHttp;
+    })
+    .map(img => img.src)
+    .slice(0, 10);
+  
+  const videos = [];
+  
+  document.querySelectorAll('video').forEach(v => {
+    if (v.src || v.currentSrc) {
+      videos.push(v.src || v.currentSrc);
+    }
+  });
+  
+  document.querySelectorAll('iframe').forEach(iframe => {
+    const src = iframe.src || '';
+    if (src.includes('youtube.com') || src.includes('youtu.be') || src.includes('vimeo.com')) {
+      videos.push(src);
+    }
+  });
+  
+  console.log(`� Extracted: ${text.length} chars text, ${images.length} images, ${videos.length} videos`);
+  
+  if (images.length === 0) {
+    speak("No valid images found to describe. Images must be larger than 100 by 100 pixels.");
+    return;
+  }
+  
+  try {
+    speak(`Analyzing ${images.length} images. Please wait.`);
+    
+    // Send to background.js to call /analyze-page (EXACT SAME as sidepanel button)
+    chrome.runtime.sendMessage({
+      action: 'analyzeFullPage',  // Use the FULL page analysis endpoint
+      text: text,
+      images: images,
+      videos: videos.slice(0, 5)
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error("❌ Message error:", chrome.runtime.lastError);
+        speak("Failed to communicate with extension.");
+        return;
+      }
+      
+      if (!response || !response.success) {
+        console.error("❌ Backend error:", response?.error);
+        speak("Failed to describe images. Make sure the backend server is running.");
+        return;
+      }
+      
+      console.log("✅ Full page analysis result:", response.result);
+      
+      // Extract and speak ONLY the image descriptions
+      if (response.result.image_descriptions && response.result.image_descriptions.length > 0) {
+        const validDescriptions = response.result.image_descriptions.filter(desc => 
+          desc.caption && !desc.caption.includes("No valid images")
+        );
+        
+        if (validDescriptions.length > 0) {
+          const descriptions = validDescriptions
+            .map((desc, idx) => `Image ${idx + 1}: ${desc.caption}`)
+            .join(". ");
+          
+          console.log("📢 Speaking image descriptions:", descriptions);
+          speak(descriptions);
+        } else {
+          speak("Could not describe images.");
+        }
+      } else {
+        speak("Could not describe images.");
+      }
+    });
+    
+  } catch (error) {
+    console.error("❌ Image description error:", error);
+    speak("Failed to describe images.");
+  }
+}
+
+/**
+ * Summarize video content on the page
+ */
+function summarizeVideo() {
+  if (!canExecuteCommand('summarize_video')) return;
+  
+  const video = findViableVideo();
+  
+  if (!video) {
+    speak("No video found on this page.");
+    return;
+  }
+  
+  console.log("🎬 Video found, starting analysis...");
+  
+  // Use existing video analysis functionality
+  startVideoAnalysisLoop();
+  
+  setTimeout(() => {
+    speak("Video analysis started. The video will be analyzed and summarized automatically.");
+  }, 1000);
+}
 
 // --- ReadBuddy Screen Reader Implementation ---
 function ReadBuddyScreenReader() {
@@ -1262,3 +1612,26 @@ ReadBuddyScreenReader.prototype.stopSpeaking = function() {
 var readBuddy = new ReadBuddyScreenReader();
 
 console.log('✅ ReadBuddy loaded! Press Ctrl+Alt+R or click the bubble button (v1.3.0 - Pause/Resume)');
+
+// Initialize TTS on first user interaction to get permission
+let ttsInitialized = false;
+function initializeTTS() {
+  if (ttsInitialized) return;
+  
+  console.log('🎤 Initializing TTS permissions...');
+  const utterance = new SpeechSynthesisUtterance('');
+  utterance.volume = 0; // Silent
+  speechSynthesis.speak(utterance);
+  ttsInitialized = true;
+  console.log('✅ TTS initialized');
+  
+  // Remove listeners after first initialization
+  document.removeEventListener('click', initializeTTS);
+  document.removeEventListener('keydown', initializeTTS);
+}
+
+// Listen for ANY user interaction to initialize TTS
+document.addEventListener('click', initializeTTS, { once: true });
+document.addEventListener('keydown', initializeTTS, { once: true });
+
+} // End of __READBUDDY_LOADED__ guard

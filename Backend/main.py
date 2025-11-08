@@ -810,13 +810,17 @@ async def analyze_page(request: Request):
         valid_images = 0
         
         for idx, url in enumerate(image_urls, 1):
+            # Process all images but limit results to 5
             if valid_images >= 5:
+                print(f"   ⏭️ Skipping image {idx}/{len(image_urls)} - already have 5 captions")
                 break
                 
             if not url.startswith("http"):
+                print(f"   ⏭️ Skipping image {idx}/{len(image_urls)} - not HTTP URL")
                 continue
 
             try:
+                print(f"   📥 Processing image {idx}/{len(image_urls)}: {url[:60]}...")
                 image_data = download_image_safe(url)
                 img = Image.open(io.BytesIO(image_data))
                 
@@ -824,8 +828,10 @@ async def analyze_page(request: Request):
                     img = img.convert('RGB')
                 
                 width, height = img.size
+                print(f"      Image size: {width}x{height}")
                 
                 if width < 50 or height < 50:
+                    print(f"   ⏭️ Skipping image {idx} - too small ({width}x{height})")
                     continue
                 
                 max_size = 384
@@ -834,6 +840,7 @@ async def analyze_page(request: Request):
                     new_width = int(width * ratio)
                     new_height = int(height * ratio)
                     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    print(f"      Resized to: {new_width}x{new_height}")
                 
                 caption_text = generate_caption_safe(img)
                 
@@ -844,10 +851,18 @@ async def analyze_page(request: Request):
                         "size": f"{width}x{height}"
                     })
                     valid_images += 1
+                    print(f"   ✅ Caption {valid_images}: {caption_text[:60]}...")
+                else:
+                    print(f"   ⚠️ Image {idx} - caption generation returned None")
                 
-            except (UnidentifiedImageError, requests.exceptions.RequestException):
+            except UnidentifiedImageError as e:
+                print(f"   ❌ Image {idx} - UnidentifiedImageError: {str(e)[:100]}")
                 continue
-            except Exception:
+            except requests.exceptions.RequestException as e:
+                print(f"   ❌ Image {idx} - Network error: {str(e)[:100]}")
+                continue
+            except Exception as e:
+                print(f"   ❌ Image {idx} - Unexpected error: {str(e)[:100]}")
                 continue
 
         if not image_descriptions:

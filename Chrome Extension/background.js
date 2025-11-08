@@ -5,22 +5,176 @@ chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
-// Set up side panel on installation
+// Keyboard command handler for shortcuts
+let lastCommandTime = {};
+let commandInProgress = {}; // Flag to prevent overlapping executions
+const COMMAND_COOLDOWN = 300; // 300ms cooldown between commands
+
+chrome.commands.onCommand.addListener(async (command) => {
+  console.log('⌨️ COMMAND RECEIVED:', command);
+  
+  // Aggressive debounce - check both time AND in-progress flag
+  const now = Date.now();
+  const lastTime = lastCommandTime[command] || 0;
+  
+  if (commandInProgress[command]) {
+    console.log(`⏳ Command "${command}" already in progress, ignoring...`);
+    return;
+  }
+  
+  if (now - lastTime < COMMAND_COOLDOWN) {
+    console.log(`⏳ Command "${command}" on cooldown (${now - lastTime}ms ago), ignoring...`);
+    return;
+  }
+  
+  // Set flags
+  lastCommandTime[command] = now;
+  commandInProgress[command] = true;
+  
+  // Clear the in-progress flag after cooldown
+  setTimeout(() => {
+    commandInProgress[command] = false;
+  }, COMMAND_COOLDOWN);
+  
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  
+  if (tabs.length === 0) {
+    console.log('❌ No active tabs found');
+    commandInProgress[command] = false;
+    return;
+  }
+  
+  const tab = tabs[0];
+  console.log('✅ Active tab:', tab.id, tab.url);
+  
+  // Skip chrome:// and extension pages (content scripts can't run there)
+  if (tab.url?.startsWith('chrome://') || tab.url?.startsWith('chrome-extension://')) {
+    console.log('⚠️ Cannot run on chrome:// pages');
+    commandInProgress[command] = false;
+    return;
+  }
+  
+  // Try to send message to content script
+  try {
+    await chrome.tabs.sendMessage(tab.id, { action: command });
+    console.log('✅ Message sent successfully');
+  } catch (error) {
+    // Content script not loaded - inject it first
+    console.log('⚠️ Content script not responding, attempting injection...');
+    
+    try {
+      // Check if already injected by trying to ping first
+      try {
+        await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
+        console.log('✅ Content script is actually loaded, retrying command...');
+        await chrome.tabs.sendMessage(tab.id, { action: command });
+        return;
+      } catch (pingError) {
+        // Really not loaded, inject it
+        console.log('🔧 Injecting content script...');
+      }
+      
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
+      });
+      
+      console.log('✅ Content script injected, sending command...');
+      
+      // Wait a moment for the script to initialize
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(tab.id, { action: command });
+          console.log('✅ Command sent after injection');
+        } catch (err) {
+          console.log('❌ Still failed:', err.message);
+          commandInProgress[command] = false;
+        }
+      }, 200);
+      
+    } catch (injectError) {
+      console.log('❌ Failed to inject content script:', injectError.message);
+      commandInProgress[command] = false;
+    }
+  }
+});
+
+// AUTO-OPEN SIDE PANEL WHEN CHROME STARTS (onStartup works!)
+chrome.runtime.onStartup.addListener(() => {
+  console.log('🚀 Chrome started - checking auto-open setting...');
+  
+  // Check if user enabled auto-open
+  chrome.storage.sync.get(['autoOpenOnStartup'], (result) => {
+    const shouldAutoOpen = result.autoOpenOnStartup !== false; // Default to true
+    
+    if (shouldAutoOpen) {
+      console.log('✅ Auto-open enabled - opening ReadBuddy side panel...');
+      
+      // Get ALL windows and open side panel in each
+      chrome.windows.getAll({ windowTypes: ['normal'] }, (windows) => {
+        windows.forEach(window => {
+          chrome.sidePanel.open({ windowId: window.id })
+            .then(() => console.log(`✅ Side panel opened in window ${window.id}`))
+            .catch((error) => console.error('❌ Failed to open:', error.message));
+        });
+      });
+    } else {
+      console.log('⏸️ Auto-open disabled by user');
+    }
+  });
+});
+
+// AUTO-OPEN SIDE PANEL WHEN NEW WINDOW IS CREATED
+// Unfortunately, Chrome's strict Manifest V3 policies prevent programmatic opening
+// without a direct user gesture. We'll show a subtle reminder instead.
+chrome.windows.onCreated.addListener((window) => {
+  console.log('🪟 New window created:', window.id);
+  
+  // Only handle normal browser windows
+  if (window.type && window.type !== 'normal') {
+    return;
+  }
+  
+  // Check if user enabled auto-open
+  chrome.storage.sync.get(['autoOpenOnStartup'], (result) => {
+    if (result.autoOpenOnStartup !== false) {
+      console.log('💡 Tip: Click the ReadBuddy icon to open the side panel');
+      // Note: We cannot programmatically open due to Chrome's user gesture requirement
+      // The user will need to click the extension icon manually for new windows
+    }
+  });
+});
+
+// AUTO-OPEN SIDE PANEL ON INSTALLATION/UPDATE
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    console.log('✅ ReadBuddy installed! Click the extension icon to open the side panel.');
+    console.log('✅ ReadBuddy installed! Opening side panel...');
     chrome.storage.sync.set({
       speechRate: 1.0,
       autoSpeak: true,
       captureMode: 'multi',  // New: 'single' or 'multi'
-      frameInterval: 5        // New: 3, 5, or 10 seconds
+      frameInterval: 5,       // New: 3, 5, or 10 seconds
+      autoOpenOnStartup: true // NEW: Auto-open setting
     });
+    
+    // Open side panel immediately after installation
+    chrome.windows.getCurrent((window) => {
+      if (window && window.id) {
+        chrome.sidePanel.open({ windowId: window.id })
+          .then(() => console.log('✅ Side panel opened on installation'))
+          .catch((error) => console.error('❌ Failed to open side panel:', error));
+      }
+    });
+    
   } else if (details.reason === 'update') {
     console.log('✅ ReadBuddy updated to version', chrome.runtime.getManifest().version);
     // Ensure new settings exist
-    chrome.storage.sync.get(['captureMode', 'frameInterval'], (result) => {
+    chrome.storage.sync.get(['captureMode', 'frameInterval', 'autoOpenOnStartup'], (result) => {
       if (!result.captureMode) {
         chrome.storage.sync.set({ captureMode: 'multi', frameInterval: 5 });
+      }
+      if (result.autoOpenOnStartup === undefined) {
+        chrome.storage.sync.set({ autoOpenOnStartup: true });
       }
     });
   }
@@ -29,6 +183,23 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Enhanced message handler for content scripts and side panel
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('📨 Background received message:', message.action);
+  
+  // --- Auto-open side panel (triggered from content script) ---
+  if (message.action === 'autoOpenSidePanel') {
+    console.log('🚀 Auto-open request received from content script');
+    if (sender.tab && sender.tab.windowId) {
+      chrome.sidePanel.open({ windowId: sender.tab.windowId })
+        .then(() => {
+          console.log('✅ Side panel auto-opened successfully');
+          sendResponse({ success: true });
+        })
+        .catch((error) => {
+          console.error('❌ Failed to auto-open side panel:', error.message);
+          sendResponse({ success: false, error: error.message });
+        });
+      return true; // Keep channel open for async response
+    }
+  }
   
   // --- Single Video Frame Analysis (original) ---
   if (message.action === 'analyzeVideoFrame') {
@@ -172,6 +343,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     broadcastToSidePanels(message);
     sendResponse({ received: true });
     return false;
+  }
+  
+  // --- NEW: Analyze Page (from keyboard shortcut) ---
+  if (message.action === 'analyzePage') {
+    console.log('📄 Analyzing page content...');
+    analyzePageContent(message.text)
+      .then(result => {
+        console.log('✅ Page analysis complete');
+        sendResponse({ success: true, result: result });
+      })
+      .catch(error => {
+        console.error('❌ Page analysis error:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep channel open for async response
+  }
+  
+  // --- NEW: Analyze FULL page (text + images + videos) - Same as sidepanel button ---
+  if (message.action === 'analyzeFullPage') {
+    console.log('📊 Analyzing FULL page (text + images + videos)...');
+    analyzeFullPage(message.text, message.images, message.videos)
+      .then(result => {
+        console.log('✅ Full page analysis complete');
+        sendResponse({ success: true, result: result });
+      })
+      .catch(error => {
+        console.error('❌ Full page analysis error:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep channel open for async response
+  }
+  
+  // --- NEW: Analyze Images (from keyboard shortcut) ---
+  if (message.action === 'analyzeImages') {
+    console.log('🖼️ Analyzing images...');
+    analyzePageImages(message.images)
+      .then(result => {
+        console.log('✅ Image analysis complete');
+        sendResponse({ success: true, result: result });
+      })
+      .catch(error => {
+        console.error('❌ Image analysis error:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep channel open for async response
   }
   
   // Default: no async response needed
@@ -338,6 +554,122 @@ async function summarizeCaptionsOnly(captions) {
       success: false, 
       error: error.message || "Failed to summarize captions." 
     };
+  }
+}
+
+/**
+ * NEW: Analyze page text content (for keyboard shortcut)
+ * @param {string} text - The page text content
+ * @returns {Promise<object>} The analysis result from the backend
+ */
+async function analyzePageContent(text) {
+  try {
+    console.log(`📤 Sending page content to backend (${text.length} characters)`);
+    
+    const response = await fetch("http://127.0.0.1:8000/analyze-page", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ 
+        text: text,
+        images: [],
+        videos: []
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ Backend error:", response.status, errorText);
+      throw new Error(`Backend page analysis failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log("✅ Page content analyzed successfully");
+    
+    return data;
+    
+  } catch (error) {
+    console.error("❌ Background Script Error during page analysis:", error);
+    throw error;
+  }
+}
+
+/**
+ * NEW: Analyze page images (for keyboard shortcut)
+ * @param {Array<string>} imageUrls - Array of image URLs
+ * @returns {Promise<object>} The analysis result from the backend
+ */
+async function analyzePageImages(imageUrls) {
+  try {
+    console.log(`📤 Sending ${imageUrls.length} images to backend`);
+    
+    const response = await fetch("http://127.0.0.1:8000/analyze-page", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ 
+        text: "",
+        images: imageUrls,
+        videos: []
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ Backend error:", response.status, errorText);
+      throw new Error(`Backend image analysis failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log("✅ Images analyzed successfully");
+    
+    return data;
+    
+  } catch (error) {
+    console.error("❌ Background Script Error during image analysis:", error);
+    throw error;
+  }
+}
+
+/**
+ * NEW: Analyze FULL page (text + images + videos) - Same as sidepanel button
+ * @param {string} text - Page text content
+ * @param {Array<string>} imageUrls - Array of image URLs
+ * @param {Array<string>} videoUrls - Array of video URLs
+ * @returns {Promise<object>} The analysis result from the backend
+ */
+async function analyzeFullPage(text, imageUrls, videoUrls) {
+  try {
+    console.log(`📤 Sending FULL page to backend: ${text.length} chars, ${imageUrls.length} images, ${videoUrls.length} videos`);
+    
+    const response = await fetch("http://127.0.0.1:8000/analyze-page", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ 
+        text: text,
+        images: imageUrls,
+        videos: videoUrls
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ Backend error:", response.status, errorText);
+      throw new Error(`Backend full page analysis failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log("✅ Full page analyzed successfully");
+    
+    return data;
+    
+  } catch (error) {
+    console.error("❌ Background Script Error during full page analysis:", error);
+    throw error;
   }
 }
 

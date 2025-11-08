@@ -132,13 +132,22 @@ Readbuddy_2.0/
 │
 ├── 📂 Chrome Extension/           # Frontend - Chrome Extension
 │   ├── background.js              # Service worker - message routing
+│   │   ├── Keyboard command listener (Alt+1/2/3/4)
+│   │   ├── Debounce mechanism (300ms cooldown)
+│   │   ├── Content script auto-injection
+│   │   └── Backend proxy (CORS workaround)
 │   ├── content.js                 # Video analysis logic (1,265 lines)
 │   │   ├── Segmented analysis
 │   │   ├── Frame capture (3 methods)
 │   │   ├── Grace period handling
 │   │   ├── Pause/resume control
+│   │   ├── Keyboard command handlers
+│   │   ├── TTS initialization
 │   │   └── Error recovery
 │   ├── manifest.json              # Extension configuration (Manifest V3)
+│   │   ├── 4 keyboard shortcuts defined
+│   │   ├── Permissions (activeTab, scripting, etc.)
+│   │   └── Background service worker
 │   ├── sidepanel.html             # User interface HTML
 │   └── sidepanel.js               # UI logic & TTS control (777 lines)
 │       ├── Button handlers
@@ -1387,11 +1396,14 @@ Every 30 seconds:
 - 100+ languages supported
 - Auto-speak or manual trigger
 
-### ⌨️ **Keyboard Navigation**
-- Full screen reader mode
-- Navigate by element type (headings, links, buttons, images)
-- Visual highlighting
-- Announces element descriptions
+### ⌨️ **Keyboard Shortcuts** ⭐ NEW!
+- **Alt+1**: Summarize current page instantly
+- **Alt+2**: Describe all images on the page
+- **Alt+3**: Analyze and summarize video content
+- **Alt+4**: Stop text-to-speech immediately
+- **Works from any webpage** - No need to open side panel
+- **Auto-injects** content script if not already loaded
+- **Speaks results** automatically via TTS
 
 ### 🎯 **Floating Bubble UI**
 - Always-visible control button
@@ -1499,29 +1511,57 @@ ReadBuddy-Extension/
 - Find "ReadBuddy AI Screen Reader"
 - Click pin 📌 to keep visible
 
+#### 5. Test Keyboard Shortcuts
+1. Navigate to any webpage (e.g., Wikipedia)
+2. Press **Alt+1** to test page summarization
+3. If TTS doesn't work:
+   - Click anywhere on the page first (initializes TTS permissions)
+   - Try Alt+1 again
+4. Press **Alt+4** to stop speaking
+5. Press **Alt+2** to describe images on page
+
+**Expected console output (F12):**
+```
+🎤 Initializing TTS on first user interaction...
+✅ TTS initialized successfully
+📄 Summarize page command received
+📊 Extracted 3847 characters from page
+✅ Analysis successful, speaking summary...
+```
+
 ---
 
 ## 📖 How to Use
 
 ### 🚀 Quick Start
 
-#### **Method 1: Side Panel** (Recommended)
+#### **Method 1: Keyboard Shortcuts** ⭐ FASTEST!
+1. Start backend: `python main.py`
+2. Navigate to any webpage
+3. Press **Alt+1** to summarize page (spoken)
+4. Press **Alt+2** to describe images (spoken)
+5. Press **Alt+3** to analyze video (spoken)
+6. Press **Alt+4** to stop speaking
+
+**No clicking required!** Perfect for accessibility.
+
+#### **Method 2: Side Panel**
 1. Start backend: `python main.py`
 2. Click ReadBuddy icon in Chrome toolbar
 3. Side panel opens on right
 4. Click "Analyze Current Page" for text/images
 5. Click "Video Visuals Analysis (30s)" for live video analysis
 
-#### **Method 2: Floating Bubble**
+#### **Method 3: Floating Bubble**
 1. Navigate to any webpage
 2. Purple gradient bubble appears in bottom-right
 3. Click bubble → "Analyze Page"
 4. Results appear and are read aloud
 
-#### **Method 3: Keyboard**
+#### **Method 4: Screen Reader Mode**
 1. Press `Ctrl+Alt+R` on any page
 2. Screen reader mode activates
-3. Navigate with keyboard shortcuts
+3. Navigate with keyboard shortcuts (J/K/H/L/B/G/F)
 
 ---
 
@@ -1593,6 +1633,124 @@ const ANALYSIS_INTERVAL_SECONDS = 60;
 ---
 
 ### ⌨️ Keyboard Shortcuts
+
+#### **Global Accessibility Shortcuts** ⭐ NEW!
+
+These shortcuts work on **any webpage** without needing to open the side panel:
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| **Alt+1** | Summarize Page | AI summarizes all text on current page and speaks it aloud |
+| **Alt+2** | Describe Images | AI describes all images (>100×100px) with spoken captions |
+| **Alt+3** | Summarize Video | Analyzes video content and provides spoken summary |
+| **Alt+4** | Stop Speaking | Immediately stops all text-to-speech playback |
+
+**How It Works:**
+```
+1. Press Alt+1 on any webpage
+   ↓
+2. Extension auto-injects content script (if needed)
+   ↓
+3. Extracts page text (first 4000 characters)
+   ↓
+4. Sends to backend for AI summarization
+   ↓
+5. Speaks summary automatically
+   ✅ Done! No clicking required.
+```
+
+**Key Features:**
+- ✅ **No side panel needed** - Works from keyboard alone
+- ✅ **Auto-initialization** - First keypress enables TTS permissions
+- ✅ **Debounced** - Prevents duplicate commands (300ms cooldown)
+- ✅ **Background processing** - Extension handles CORS restrictions
+- ✅ **Visual feedback** - Console logs show progress
+
+**Technical Details:**
+
+**Alt+1 (Summarize Page):**
+- Extracts: First 4000 characters of body text
+- Processing: FLAN-T5-Base AI model
+- Output: Spoken summary (10-30 seconds)
+- Use case: Quick page overview for accessibility
+
+**Alt+2 (Describe Images):**
+- Filters images: Width > 100px AND Height > 100px
+- Maximum: 10 images per request
+- Processing: BLIP-Large image captioning model
+- Output: "Image 1: [description]. Image 2: [description]..."
+- Use case: Understanding visual content without sight
+
+**Alt+3 (Summarize Video):**
+- Finds: First `<video>` element on page
+- Captures: Current frame OR uses metadata
+- Processing: Video analysis + text summarization
+- Output: Spoken video summary
+- Use case: Accessibility for video content
+
+**Alt+4 (Stop Speaking):**
+- Instantly stops: window.speechSynthesis.cancel()
+- Clears queue: All pending utterances removed
+- No delay: Immediate response
+- Use case: Quick control when you need silence
+
+**Example Workflow:**
+
+```
+User on news article page:
+1. Press Alt+1
+   → "Breaking news: Scientists discover new planet..."
+   
+2. Press Alt+2
+   → "Image 1: Telescope pointed at night sky. 
+       Image 2: Scientists in laboratory..."
+       
+3. Press Alt+4 (if needed)
+   → 🔇 Silence (stopped speaking)
+```
+
+**Debugging:**
+
+Open DevTools Console (F12) to see:
+```javascript
+// When you press Alt+2:
+🖼️ Describe images command received
+🖼️ Starting image analysis using EXACT sidepanel button logic...
+📊 Extracted: 4000 chars text, 3 images, 0 videos
+✅ Full page analysis result: {...}
+📢 Speaking image descriptions: Image 1: A person sitting at desk...
+```
+
+**Customization:**
+
+Want different shortcuts? Edit `manifest.json`:
+```json
+{
+  "commands": {
+    "summarize_page": {
+      "suggested_key": {
+        "default": "Alt+1",     // Change to "Ctrl+Shift+S"
+        "mac": "Alt+1"
+      },
+      "description": "Summarize current page"
+    }
+  }
+}
+```
+
+**Browser Support:**
+- ✅ Chrome/Chromium
+- ✅ Edge
+- ✅ Brave
+- ✅ Opera
+- ❌ Firefox (Manifest V3 only)
+
+**Known Limitations:**
+- Chrome allows max **4 keyboard commands** per extension
+- Shortcuts must include Alt, Ctrl, or Command
+- Cannot override browser shortcuts (Ctrl+T, Ctrl+W, etc.)
+
+#### **Screen Reader Mode Shortcuts:**
 
 **Enable/Disable:**
 - `Ctrl+Alt+R` - Toggle screen reader mode
@@ -1728,6 +1886,160 @@ const ANALYSIS_INTERVAL_SECONDS = 60;
 ---
 
 ## 🐛 Troubleshooting
+
+### Keyboard Shortcut Issues
+
+#### **"Shortcuts not working / Nothing happens"**
+
+**Symptoms:**
+- Press Alt+1, Alt+2, etc. - no response
+- No console logs appear
+
+**Solutions:**
+
+**1. Reload Extension:**
+```
+1. Go to chrome://extensions/
+2. Find ReadBuddy
+3. Click reload button 🔄
+4. Try shortcuts again
+```
+
+**2. Check Service Worker Status:**
+```
+1. Go to chrome://extensions/
+2. Find ReadBuddy
+3. Click "service worker" link
+4. Console should show: "⌨️ Command listener registered"
+5. Press Alt+1
+6. Should see: "⌨️ COMMAND RECEIVED: summarize_page"
+```
+
+**3. Initialize TTS Permissions:**
+```javascript
+// TTS requires user interaction first
+// Solution: Click anywhere on the page, THEN press Alt+1
+```
+
+**4. Check Backend Connection:**
+```
+1. Visit http://127.0.0.1:8000 in browser
+2. Should see: {"status":"online","models_loaded":true}
+3. If not, restart backend: python main.py
+```
+
+#### **"Shortcuts trigger twice / Duplicate execution"**
+
+**Symptoms:**
+- Press Alt+2 once, hear descriptions twice
+- Console shows duplicate "🖼️ Describe images command received"
+
+**Causes:**
+- Service worker not properly debouncing
+- Extension not fully reloaded after code changes
+
+**Solutions:**
+
+**1. Full Extension Reload:**
+```
+1. chrome://extensions/
+2. Click "Remove" for ReadBuddy
+3. Click "Load unpacked" again
+4. Select Chrome Extension folder
+5. Test Alt+2 - should execute only once
+```
+
+**2. Verify Debounce Active:**
+```javascript
+// Check service worker console:
+// Should see:
+⌨️ COMMAND RECEIVED: describe_images
+⏸️ Command describe_images already in progress, skipping
+```
+
+**3. Increase Cooldown (if needed):**
+```javascript
+// Edit background.js, line 10:
+const COMMAND_COOLDOWN = 300; // Change to 500
+
+// Reload extension
+```
+
+#### **"TTS says 'not-allowed' / Permission denied"**
+
+**Error in console:**
+```
+❌ Speech synthesis error: not-allowed
+💡 Please click anywhere on the page first...
+```
+
+**Cause:** Chrome requires user gesture before allowing TTS
+
+**Solution:**
+```
+1. Click anywhere on the webpage (activates page)
+2. Try keyboard shortcut again
+3. TTS will work from then on
+```
+
+**Technical explanation:**
+```javascript
+// content.js initializes TTS on first click/keypress:
+document.addEventListener('click', initializeTTS, { once: true });
+document.addEventListener('keydown', initializeTTS, { once: true });
+
+function initializeTTS() {
+  const utterance = new SpeechSynthesisUtterance('');
+  utterance.volume = 0; // Silent
+  speechSynthesis.speak(utterance); // Gets permission
+}
+```
+
+#### **"Alt+2 detects different number of images than side panel button"**
+
+**Symptoms:**
+- Side panel "Analyze Page" finds 3 images
+- Alt+2 finds 2 images or different images
+
+**Cause:** Old version of content.js with different filtering
+
+**Solution:**
+```javascript
+// Verify content.js has EXACT same logic as sidepanel:
+// Lines 947-1076 in content.js should match sidepanel.js lines 518-544
+
+// Image filtering should be:
+const images = Array.from(document.images)
+  .filter(img => {
+    const isValidSize = img.width > 100 && img.height > 100;
+    const isHttp = img.src.startsWith('http');
+    return isValidSize && isHttp;
+  })
+  .slice(0, 10);
+
+// If not matching, reload extension or pull latest code
+```
+
+#### **"Command works in console but not with keyboard shortcut"**
+
+**Symptoms:**
+- Running `chrome.runtime.sendMessage({action: 'analyzePage'})` in console works
+- Pressing Alt+1 doesn't work
+
+**Cause:** Keyboard command listener not registered or inactive
+
+**Debug steps:**
+```
+1. Open service worker console (chrome://extensions/ → "service worker")
+2. Check for: "⌨️ Command listener registered successfully"
+3. If missing, check manifest.json has:
+   {
+     "commands": {
+       "summarize_page": { "suggested_key": { "default": "Alt+1" } }
+     }
+   }
+4. Reload extension
+```
 
 ### Video Analysis Issues
 
@@ -1947,6 +2259,370 @@ function startMultiVideoAnalysis() {
 ---
 
 ## 🎓 Code Explanation
+
+### How Keyboard Shortcuts Work (Technical Deep Dive)
+
+#### **Complete Flow: User Presses Alt+2**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ USER PRESSES Alt+2 ON WEBPAGE                               │
+└─────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ CHROME KEYBOARD API (Native)                                │
+│ • Detects "Alt+2" key combination                           │
+│ • Looks up command in manifest.json                         │
+│ • Finds: "describe_images"                                  │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ background.js - chrome.commands.onCommand LISTENER          │
+│                                                              │
+│ chrome.commands.onCommand.addListener((command) => {        │
+│   console.log(`⌨️ COMMAND RECEIVED: ${command}`);           │
+│                                                              │
+│   // DEBOUNCE CHECK (prevents duplicates)                   │
+│   if (commandInProgress[command]) {                         │
+│     console.log('⏸️ Already in progress, skipping');        │
+│     return;                                                 │
+│   }                                                         │
+│                                                              │
+│   const now = Date.now();                                   │
+│   if (now - lastCommandTime[command] < 300) {               │
+│     console.log('⏱️ Too soon (300ms cooldown)');            │
+│     return;                                                 │
+│   }                                                         │
+│                                                              │
+│   // Mark as in progress                                    │
+│   commandInProgress[command] = true;                        │
+│   lastCommandTime[command] = now;                           │
+│                                                              │
+│   // Clear flag after 300ms                                 │
+│   setTimeout(() => {                                        │
+│     commandInProgress[command] = false;                     │
+│   }, 300);                                                  │
+│                                                              │
+│   // ROUTE TO HANDLER                                       │
+│   switch (command) {                                        │
+│     case 'describe_images':                                 │
+│       handleDescribeImages();                               │
+│       break;                                                │
+│   }                                                         │
+│ });                                                         │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ background.js - handleDescribeImages()                      │
+│                                                              │
+│ async function handleDescribeImages() {                     │
+│   // Get current active tab                                 │
+│   const [tab] = await chrome.tabs.query({                   │
+│     active: true,                                           │
+│     currentWindow: true                                     │
+│   });                                                       │
+│                                                              │
+│   // Check if content script is already injected            │
+│   try {                                                     │
+│     await chrome.tabs.sendMessage(tab.id, {                 │
+│       action: 'ping'                                        │
+│     });                                                     │
+│     // Success = content.js already loaded                  │
+│   } catch (err) {                                           │
+│     // Failed = need to inject content.js                   │
+│     console.log('📌 Injecting content script...');          │
+│     await chrome.scripting.executeScript({                  │
+│       target: { tabId: tab.id },                            │
+│       files: ['content.js']                                 │
+│     });                                                     │
+│     await new Promise(resolve => setTimeout(resolve, 500)); │
+│   }                                                         │
+│                                                              │
+│   // Send command to content script                         │
+│   chrome.tabs.sendMessage(tab.id, {                         │
+│     action: 'describeImages'                                │
+│   });                                                       │
+│ }                                                           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ content.js - MESSAGE LISTENER                               │
+│                                                              │
+│ chrome.runtime.onMessage.addListener((request, sender,     │
+│   sendResponse) => {                                        │
+│   console.log(`📨 Message received: ${request.action}`);    │
+│                                                              │
+│   switch (request.action) {                                 │
+│     case 'describeImages':                                  │
+│       describeImages(); // Call the handler                 │
+│       break;                                                │
+│   }                                                         │
+│ });                                                         │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ content.js - describeImages() FUNCTION                      │
+│                                                              │
+│ async function describeImages() {                           │
+│   console.log('🖼️ Describe images command received');       │
+│   console.log('🖼️ Starting image analysis using EXACT       │
+│                sidepanel button logic...');                 │
+│                                                              │
+│   // EXACT SAME EXTRACTION AS SIDEPANEL BUTTON              │
+│   // (sidepanel.js lines 518-544)                           │
+│                                                              │
+│   // 1. Extract text                                        │
+│   const text = document.body.innerText.slice(0, 4000);      │
+│                                                              │
+│   // 2. Filter images (EXACT same as button)                │
+│   const images = Array.from(document.images)                │
+│     .filter(img => {                                        │
+│       const rect = img.getBoundingClientRect();             │
+│       const src = img.src || img.dataset.src || '';         │
+│                                                              │
+│       const isValidSize = img.width > 100 && img.height > 100; │
+│       const isHttp = src.startsWith('http');                │
+│                                                              │
+│       return isValidSize && isHttp;                         │
+│     })                                                      │
+│     .map(img => img.src || img.dataset.src)                 │
+│     .slice(0, 10); // Maximum 10 images                     │
+│                                                              │
+│   // 3. Extract videos                                      │
+│   const videoElements = document.querySelectorAll('video'); │
+│   const iframes = document.querySelectorAll(                │
+│     'iframe[src*="youtube"], iframe[src*="vimeo"]'          │
+│   );                                                        │
+│   const videos = [...videoElements, ...iframes]             │
+│     .map(v => v.src || v.currentSrc)                        │
+│     .filter(src => src)                                     │
+│     .slice(0, 5);                                           │
+│                                                              │
+│   console.log(`📊 Extracted: ${text.length} chars text,     │
+│                ${images.length} images, ${videos.length}     │
+│                videos`);                                    │
+│                                                              │
+│   // 4. Send to background.js for backend processing        │
+│   chrome.runtime.sendMessage({                              │
+│     action: 'analyzeFullPage', // SAME as button!           │
+│     text: text,                                             │
+│     images: images,                                         │
+│     videos: videos                                          │
+│   }, (response) => {                                        │
+│     if (!response || !response.result) {                    │
+│       console.error('❌ No valid response');                │
+│       return;                                               │
+│     }                                                       │
+│                                                              │
+│     console.log('✅ Full page analysis result:', response); │
+│                                                              │
+│     // 5. Extract ONLY image descriptions                   │
+│     const imageDescriptions = response.result               │
+│       .image_descriptions || [];                            │
+│                                                              │
+│     if (imageDescriptions.length === 0) {                   │
+│       speak('No images found on this page.');               │
+│       return;                                               │
+│     }                                                       │
+│                                                              │
+│     // 6. Format for TTS                                    │
+│     const descriptions = imageDescriptions                  │
+│       .map((desc, idx) =>                                   │
+│         `Image ${idx + 1}: ${desc.caption || desc}`         │
+│       )                                                     │
+│       .join('. ');                                          │
+│                                                              │
+│     console.log(`📢 Speaking image descriptions:            │
+│                  ${descriptions}`);                         │
+│                                                              │
+│     // 7. Speak via TTS                                     │
+│     speak(descriptions);                                    │
+│   });                                                       │
+│ }                                                           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ background.js - analyzeFullPage() PROXY                     │
+│                                                              │
+│ // Receives message from content.js                         │
+│ chrome.runtime.onMessage.addListener((request, sender,     │
+│   sendResponse) => {                                        │
+│   if (request.action === 'analyzeFullPage') {               │
+│     analyzeFullPage(request.text, request.images,           │
+│                     request.videos)                         │
+│       .then(result => sendResponse(result));                │
+│     return true; // Async response                          │
+│   }                                                         │
+│ });                                                         │
+│                                                              │
+│ // Forwards to backend (CORS workaround)                    │
+│ async function analyzeFullPage(text, images, videos) {      │
+│   const response = await fetch(                             │
+│     "http://127.0.0.1:8000/analyze-page", {                 │
+│     method: "POST",                                         │
+│     headers: { "Content-Type": "application/json" },        │
+│     body: JSON.stringify({                                  │
+│       text: text,                                           │
+│       images: images,                                       │
+│       videos: videos                                        │
+│     })                                                      │
+│   });                                                       │
+│                                                              │
+│   const data = await response.json();                       │
+│   return { result: data };                                  │
+│ }                                                           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ BACKEND - main.py /analyze-page ENDPOINT                    │
+│                                                              │
+│ @app.post("/analyze-page")                                  │
+│ async def analyze_page(data: AnalyzePageInput):             │
+│   text = data.text           # "Breaking news: NASA..."     │
+│   image_urls = data.images   # ["https://...", ...]         │
+│   video_urls = data.videos   # []                           │
+│                                                              │
+│   # 1. Summarize text (FLAN-T5)                             │
+│   summaries = summarize_text(text)                          │
+│                                                              │
+│   # 2. Caption each image (BLIP-Large)                      │
+│   image_descriptions = []                                   │
+│   for i, url in enumerate(image_urls[:10]):                 │
+│     print(f"📥 Processing image {i+1}/{len(image_urls)}")   │
+│                                                              │
+│     # Download image                                        │
+│     response = requests.get(url, timeout=10)                │
+│     img = Image.open(BytesIO(response.content)).convert('RGB') │
+│                                                              │
+│     # Skip if too small                                     │
+│     if img.width < 50 or img.height < 50:                   │
+│       print(f"⏭️ Skipping image {i+1} - too small")         │
+│       continue                                              │
+│                                                              │
+│     # Generate caption                                      │
+│     inputs = blip_processor(images=[img],                   │
+│                             return_tensors="pt")            │
+│     caption_ids = blip_model.generate(**inputs)             │
+│     caption = blip_processor.decode(caption_ids[0],         │
+│                                     skip_special_tokens=True) │
+│                                                              │
+│     image_descriptions.append({                             │
+│       "url": url,                                           │
+│       "caption": caption                                    │
+│     })                                                      │
+│     print(f"✅ Caption {i+1}: {caption}")                   │
+│                                                              │
+│   # 3. Return results                                       │
+│   return {                                                  │
+│     "summaries": summaries,                                 │
+│     "image_descriptions": image_descriptions,               │
+│     "status": "success"                                     │
+│   }                                                         │
+│                                                              │
+│   # Example response:                                       │
+│   # {                                                       │
+│   #   "summaries": ["Article discusses NASA's discovery..."], │
+│   #   "image_descriptions": [                               │
+│   #     {                                                   │
+│   #       "url": "https://example.com/img1.jpg",            │
+│   #       "caption": "A telescope pointing at the night sky." │
+│   #     },                                                  │
+│   #     {                                                   │
+│   #       "url": "https://example.com/img2.jpg",            │
+│   #       "caption": "Scientists in a laboratory."          │
+│   #     },                                                  │
+│   #     {                                                   │
+│   #       "url": "https://example.com/img3.jpg",            │
+│   #       "caption": "A view of planet from space."         │
+│   #     }                                                   │
+│   #   ]                                                     │
+│   # }                                                       │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ Returns JSON
+                       ▼
+         ┌────────────────────────────┐
+         │ background.js forwards     │
+         │ response back to content.js│
+         └────────────┬───────────────┘
+                      │
+                      ▼
+         ┌────────────────────────────┐
+         │ content.js receives result │
+         │ Extracts image_descriptions│
+         │ Calls speak() with:        │
+         │ "Image 1: A telescope...   │
+         │  Image 2: Scientists...    │
+         │  Image 3: A view of..."    │
+         └────────────┬───────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│ content.js - speak() FUNCTION (Web Speech API)              │
+│                                                              │
+│ function speak(text) {                                      │
+│   // Stop any current speech                                │
+│   window.speechSynthesis.cancel();                          │
+│                                                              │
+│   // Create utterance                                       │
+│   const utterance = new SpeechSynthesisUtterance(text);     │
+│   utterance.rate = 1.0;   // Normal speed                   │
+│   utterance.lang = 'en-US';                                 │
+│                                                              │
+│   // Error handling                                         │
+│   utterance.onerror = (event) => {                          │
+│     if (event.error === 'not-allowed') {                    │
+│       console.error('❌ TTS not allowed - click page first'); │
+│       showNotification('Click anywhere on page, then retry Alt+2'); │
+│     }                                                       │
+│   };                                                        │
+│                                                              │
+│   // Speak!                                                 │
+│   window.speechSynthesis.speak(utterance);                  │
+│   console.log('🔊 Speaking:', text);                        │
+│ }                                                           │
+└─────────────────────────────────────────────────────────────┘
+                      │
+                      ▼
+         ┌────────────────────────────┐
+         │ USER HEARS:                │
+         │ "Image 1: A telescope      │
+         │  pointing at the night sky.│
+         │  Image 2: Scientists in a  │
+         │  laboratory. Image 3: A    │
+         │  view of planet from space."│
+         └────────────────────────────┘
+
+TOTAL TIME: ~5-10 seconds (3 images × 2-3s each)
+```
+
+#### **Why This Architecture?**
+
+**1. Background.js as Proxy:**
+- Content scripts can't make cross-origin fetch requests (CORS)
+- Background script has elevated permissions
+- Acts as proxy to backend
+
+**2. Debounce Mechanism:**
+- Prevents duplicate executions if user accidentally double-presses
+- 300ms cooldown between commands
+- Flag-based tracking (`commandInProgress`)
+
+**3. Auto-Injection:**
+- Content script may not be loaded on some pages
+- Background detects this and injects content.js
+- Ensures shortcuts work on ALL pages
+
+**4. TTS Initialization:**
+- Chrome blocks TTS without user gesture (security)
+- First click/keypress triggers silent utterance
+- Gets permission for future TTS calls
 
 ### How Frame Capture Works (Technical Deep Dive)
 
