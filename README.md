@@ -1401,9 +1401,19 @@ Every 30 seconds:
 - **Alt+2**: Describe all images on the page
 - **Alt+3**: Analyze and summarize video content
 - **Alt+4**: Stop text-to-speech immediately
+- **Ctrl+Shift+S**: Activate/Deactivate full Screen Reader mode 🆕
 - **Works from any webpage** - No need to open side panel
 - **Auto-injects** content script if not already loaded
 - **Speaks results** automatically via TTS
+
+### 🎤 **Full Screen Reader Mode** 🆕 NEW!
+- **Voice-guided navigation** with intelligent element detection
+- **Announces browser actions** (new tab, refresh, etc.)
+- **Comprehensive keyboard shortcuts** for accessibility
+- **Visual highlighting** of focused elements
+- **Persistent across page loads** - Remembers your preference
+- **Smart input detection** - Doesn't interfere with typing
+- **Customizable speech rate** and volume
 
 ### 🎯 **Floating Bubble UI**
 - Always-visible control button
@@ -1763,6 +1773,463 @@ Want different shortcuts? Edit `manifest.json`:
 - `B` - Next button
 - `G` - Next image
 - `F` - Next form field
+
+#### **Screen Reader Mode Shortcuts:**
+
+**Enable/Disable:**
+- `Ctrl+Alt+R` - Toggle screen reader mode
+
+**Navigation:**
+- `J` - Next element
+- `K` - Previous element
+- `H` - Next heading
+- `L` - Next link
+- `B` - Next button
+- `G` - Next image
+- `F` - Next form field
+
+**Control:**
+- `R` - Repeat current element
+- `S` - Stop speaking
+- `Escape` - Stop speaking
+- `Enter` - Activate current element
+
+---
+
+## 🎤 Full Screen Reader Mode (Complete Guide)
+
+### Overview
+
+ReadBuddy's Screen Reader Mode transforms your browsing experience with comprehensive voice guidance, making the web fully accessible through keyboard navigation and spoken feedback.
+
+### Activation
+
+**Method 1: Keyboard Shortcut (Recommended)**
+```
+Press: Ctrl+Shift+S
+→ Hear: "Welcome to ReadBuddy Screen Reader. You are on [Page Title]. 
+         Press H for help, or use navigation shortcuts to browse the page."
+```
+
+**Method 2: Auto-Activation**
+- Screen Reader remembers your preference
+- If active when you close Chrome, auto-activates on next visit
+- Stored in `chrome.storage.local`
+
+### Visual Indicator
+
+When active, you'll see a purple badge in top-right corner:
+```
+🎤 Screen Reader Active
+```
+- Animated pulsing effect
+- Always visible
+- Dismisses when you deactivate
+
+### Complete Keyboard Shortcuts
+
+#### **Navigation Shortcuts**
+
+| Key | Action | Example Announcement |
+|-----|--------|---------------------|
+| **J** | Next element | "Heading 2, Latest News" |
+| **K** | Previous element | "Link, Contact Us" |
+| **N** | Next heading | "Heading 1, Welcome to Our Site" |
+| **P** | Previous heading | "Heading 3, About Us" |
+| **L** | Next link | "Link, Learn More" |
+| **B** | Next button | "Button, Submit Form" |
+| **I** | Next image | "Image, Company Logo" |
+| **F** | Next form field | "Text input, Email Address" |
+
+#### **Information Shortcuts**
+
+| Key | Action | Example Announcement |
+|-----|--------|---------------------|
+| **T** | Read page title | "Page title: Wikipedia - The Free Encyclopedia" |
+| **U** | Read current URL | "Current URL: wikipedia.org, https://en.wikipedia.org/wiki/..." |
+| **R** | Repeat current element | Re-announces last focused element |
+| **H** | Help menu | Lists all available shortcuts |
+
+#### **Control Shortcuts**
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| **S** | Stop speaking | Immediately cancels all speech |
+| **Escape** | Stop speaking | Alternative to S key |
+| **Ctrl+Shift+S** | Toggle screen reader | Activate/deactivate mode |
+
+#### **Browser Action Announcements**
+
+When you use common browser shortcuts, Screen Reader announces them:
+
+| Shortcut | Action | Announcement |
+|----------|--------|-------------|
+| **Ctrl+T** | New tab | "Opening new tab" |
+| **Ctrl+W** | Close tab | "Closing current tab" |
+| **Ctrl+R** | Refresh | "Refreshing page" |
+| **Alt+Left** | Back | "Navigating back" |
+| **Alt+Right** | Forward | "Navigating forward" |
+| **Ctrl+D** | Bookmark | "Bookmarking page" |
+| **Ctrl+F** | Find | "Opening find dialog" |
+| **Ctrl+P** | Print | "Opening print dialog" |
+| **Ctrl+S** | Save | "Saving page" |
+| **Ctrl++** | Zoom in | "Zooming in" |
+| **Ctrl+-** | Zoom out | "Zooming out" |
+| **Ctrl+0** | Reset zoom | "Resetting zoom" |
+| **F11** | Fullscreen | "Entering fullscreen" / "Exiting fullscreen" |
+
+### How It Works
+
+#### **Element Detection**
+
+Screen Reader automatically finds and categorizes:
+- **Headings**: H1-H6 tags with their text content
+- **Links**: All `<a href>` elements
+- **Buttons**: `<button>`, `<input type="button/submit">`
+- **Form Fields**: `<input>`, `<textarea>`, `<select>`
+- **Images**: `<img>` with alt text or title
+
+#### **Smart Navigation**
+
+```
+1. Press J (next element)
+   ↓
+2. Screen Reader finds next navigable element
+   ↓
+3. Scrolls element into view (smooth animation)
+   ↓
+4. Highlights element with purple outline
+   ↓
+5. Announces: "[Element Type], [Element Text]"
+   ↓
+6. Highlight fades after 3 seconds
+```
+
+#### **Label Detection for Inputs**
+
+Screen Reader intelligently finds input labels:
+1. Checks for `<label for="input-id">`
+2. Checks if input is inside `<label>` tag
+3. Falls back to `aria-label` attribute
+4. Uses `placeholder` text if no label found
+
+### Example Usage Scenarios
+
+#### **Scenario 1: Reading a News Article**
+
+```
+User: Presses Ctrl+Shift+S
+Screen Reader: "Welcome to ReadBuddy Screen Reader. You are on CNN - Breaking News. 
+                Press H for help..."
+
+User: Presses N (next heading)
+Screen Reader: "Heading 1, Breaking: Major Event Unfolds"
+
+User: Presses J (next element)
+Screen Reader: "Link, Read Full Story"
+
+User: Presses J
+Screen Reader: "Heading 2, Related Articles"
+
+User: Presses L (next link)
+Screen Reader: "Link, Politics Section"
+
+User: Presses I (next image)
+Screen Reader: "Image, Photo of event scene"
+```
+
+#### **Scenario 2: Filling a Form**
+
+```
+User: On contact form page, screen reader active
+
+User: Presses F (next form field)
+Screen Reader: "Text input, First Name"
+
+User: Types "John" (screen reader doesn't interfere)
+
+User: Presses F (next form field)
+Screen Reader: "Text input, Last Name"
+
+User: Types "Doe"
+
+User: Presses F
+Screen Reader: "Email input, Email Address"
+
+User: Types email
+
+User: Presses B (next button)
+Screen Reader: "Button, Submit Form"
+
+User: Presses Enter
+Screen Reader: Form submits normally
+```
+
+#### **Scenario 3: Browser Navigation**
+
+```
+User: On any webpage
+
+User: Presses Ctrl+T
+Screen Reader: "Opening new tab"
+→ New tab opens
+
+User: Presses Ctrl+L (address bar)
+User: Types URL
+
+User: Presses Ctrl+R
+Screen Reader: "Refreshing page"
+→ Page refreshes
+
+User: Presses Alt+Left
+Screen Reader: "Navigating back"
+→ Goes to previous page
+```
+
+### Smart Features
+
+#### **1. Input Field Protection**
+
+Screen Reader detects when you're typing:
+```javascript
+if (activeElement.tagName === 'INPUT' || 
+    activeElement.tagName === 'TEXTAREA') {
+  // Don't intercept keyboard shortcuts
+  // Let user type normally
+}
+```
+
+**Result:** You can type in forms without accidentally triggering shortcuts.
+
+#### **2. Visual Highlighting**
+
+Focused elements get a purple outline:
+```css
+.screenreader-highlight {
+  outline: 4px solid #667eea;
+  outline-offset: 4px;
+  background-color: rgba(102, 126, 234, 0.1);
+  transition: all 0.3s ease;
+}
+```
+
+**Result:** Sighted users can see exactly what's being announced.
+
+#### **3. Persistent State**
+
+Screen Reader remembers if you had it active:
+```javascript
+chrome.storage.local.set({ screenReaderActive: true });
+
+// On page load:
+chrome.storage.local.get(['screenReaderActive'], (result) => {
+  if (result.screenReaderActive) {
+    screenReader.activate();
+  }
+});
+```
+
+**Result:** Stays active across page loads and browser restarts.
+
+#### **4. Fast Announcements**
+
+Browser actions use faster speech rate (1.2x):
+```javascript
+this.speak('Opening new tab', { rate: 1.2 }); // Quick feedback
+```
+
+**Result:** Instant feedback without long delays.
+
+### Customization
+
+#### **Change Speech Rate**
+
+Edit `screenreader.js`:
+```javascript
+class ScreenReader {
+  constructor() {
+    this.speechRate = 1.0; // Change to 0.8 (slower) or 1.5 (faster)
+    this.volume = 1.0;     // Change to 0.5 (quieter) or 1.0 (loudest)
+  }
+}
+```
+
+#### **Change Highlight Color**
+
+Edit the CSS in `screenreader.js`:
+```javascript
+.screenreader-highlight {
+  outline: 4px solid #667eea; // Change to #ff0000 for red
+}
+```
+
+#### **Add Custom Shortcuts**
+
+Add to the keyboard handler:
+```javascript
+case 'w': // Example: W for "Where am I?"
+  event.preventDefault();
+  this.speak(`You are on ${this.getPageTitle()}, at ${this.getPageDomain()}`);
+  break;
+```
+
+### Troubleshooting
+
+#### **"Screen Reader not activating"**
+
+1. Check console (F12):
+   ```
+   Should see: ✅ ScreenReader module loaded
+   ```
+
+2. Verify files loaded:
+   - Go to `chrome://extensions/`
+   - Check that `screenreader.js` is in content_scripts
+
+3. Reload extension:
+   - `chrome://extensions/` → Click Reload button
+
+4. Try on a regular webpage (not chrome:// pages)
+
+#### **"No speech output"**
+
+1. Click anywhere on page first (TTS requires user gesture)
+2. Check browser volume isn't muted
+3. Open console, look for TTS errors:
+   ```
+   ❌ TTS not allowed - user interaction required
+   ```
+4. Try another webpage
+
+#### **"Shortcuts not working"**
+
+1. Make sure you're NOT typing in an input field
+2. Check if another extension is using the same shortcuts
+3. Verify screen reader is active (purple badge visible)
+4. Check console for errors
+
+#### **"Announces every keystroke while typing"**
+
+This shouldn't happen (input fields are protected). If it does:
+1. Report bug with webpage URL
+2. Temporary fix: Deactivate screen reader, fill form, reactivate
+
+### Technical Architecture
+
+```
+┌────────────────────────────────────────────────────────┐
+│ USER PRESSES Ctrl+Shift+S                              │
+└────────────────────────────────────────────────────────┘
+                     │
+                     ▼
+┌────────────────────────────────────────────────────────┐
+│ Chrome Keyboard API                                     │
+│ Detects command: "activate_screen_reader"              │
+└──────────────────┬─────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ background.js                                           │
+│ • Checks for active tab                                │
+│ • Injects screenreader.js if needed                    │
+│ • Sends message: { action: 'activate_screen_reader' }  │
+└──────────────────┬─────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ screenreader.js - Message Listener                     │
+│ Receives message → Calls screenReader.toggle()         │
+└──────────────────┬─────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ ScreenReader.activate()                                 │
+│                                                         │
+│ 1. Initialize TTS (silent utterance for permission)    │
+│ 2. Set isActive = true                                 │
+│ 3. Store state: chrome.storage.local.set()             │
+│ 4. Speak welcome message                               │
+│ 5. Show visual indicator (purple badge)                │
+│ 6. Attach keyboard listeners                           │
+│ 7. Find all navigable elements on page                 │
+└──────────────────┬─────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ findNavigableElements()                                 │
+│                                                         │
+│ Scans DOM for:                                          │
+│ • document.querySelectorAll('h1, h2, h3, h4, h5, h6')  │
+│ • document.querySelectorAll('a[href]')                 │
+│ • document.querySelectorAll('button, input[type=...]') │
+│ • document.querySelectorAll('input, textarea, select') │
+│ • document.querySelectorAll('img')                     │
+│                                                         │
+│ Builds array: this.navigableElements[]                 │
+└──────────────────┬─────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ Keyboard Event Listener (Active)                       │
+│                                                         │
+│ document.addEventListener('keydown', ...)               │
+│                                                         │
+│ Listens for: J, K, H, L, B, I, F, R, T, U, S, Escape  │
+│                                                         │
+│ Also monitors: Ctrl+T, Ctrl+R, Alt+Left, etc.          │
+└────────────────────────────────────────────────────────┘
+                   │ User presses J
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ navigateNext()                                          │
+│                                                         │
+│ 1. Increment currentElementIndex                       │
+│ 2. Get element from navigableElements[index]           │
+│ 3. element.scrollIntoView({ smooth })                  │
+│ 4. highlightElement(element)                           │
+│ 5. Build announcement text                             │
+│ 6. speak(announcement)                                 │
+└──────────────────┬─────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ speak(text)                                             │
+│                                                         │
+│ const utterance = new SpeechSynthesisUtterance(text);  │
+│ utterance.rate = 1.0;                                  │
+│ utterance.lang = 'en-US';                              │
+│ window.speechSynthesis.speak(utterance);               │
+└──────────────────┬─────────────────────────────────────┘
+                   │
+                   ▼
+         ┌────────────────────┐
+         │ USER HEARS:        │
+         │ "Link, Contact Us" │
+         └────────────────────┘
+```
+
+### Compatibility
+
+✅ **Works On:**
+- All regular webpages (HTTP/HTTPS)
+- Wikipedia, news sites, blogs
+- E-commerce sites
+- Social media
+- YouTube (partial - video player has own controls)
+
+❌ **Doesn't Work On:**
+- `chrome://` pages (browser security)
+- `chrome-extension://` pages
+- PDF viewer (different DOM structure)
+- Some heavily dynamic single-page apps (may need refresh)
+
+### Accessibility Standards
+
+ReadBuddy Screen Reader helps meet:
+- ✅ **WCAG 2.1 Level AA** - Keyboard navigation
+- ✅ **Section 508** - Screen reader compatibility
+- ✅ **ARIA** - Respects aria-label attributes
+- ✅ **WAI-ARIA** - Announces landmarks and roles
 
 **Control:**
 - `R` - Repeat current element

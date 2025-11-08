@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReadBuddy - New Tab</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+            font-weight: 700;
+        }
+
+        .tagline {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-bottom: 3rem;
+        }
+
+        .search-container {
+            margin-bottom: 3rem;
+        }
+
+        .search-box {
+            width: 100%;
+            max-width: 600px;
+            padding: 1rem 1.5rem;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 50px;
+            outline: none;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .search-box:focus {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+
+        .quick-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .quick-link {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 1.5rem;
+            border-radius: 15px;
+            text-decoration: none;
+            color: white;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .quick-link:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-5px);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .quick-link-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .quick-link-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .features {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+            margin-bottom: 2rem;
+        }
+
+        .feature {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 1rem 1.5rem;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .feature-icon {
+            font-size: 1.5rem;
+        }
+
+        .screen-reader-badge {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(139, 92, 246, 0.9);
+            padding: 0.8rem 1.5rem;
+            border-radius: 30px;
+            font-weight: 600;
+            display: none;
+            animation: pulse 2s ease-in-out infinite;
+            box-shadow: 0 5px 15px rgba(139, 92, 246, 0.4);
+        }
+
+        .screen-reader-badge.active {
+            display: block;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .keyboard-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2rem;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        .keyboard-hint kbd {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.2rem 0.5rem;
+            border-radius: 5px;
+            font-family: monospace;
+            margin: 0 0.2rem;
+        }
+
+        .time-greeting {
+            font-size: 1.5rem;
+            margin-bottom: 2rem;
+            opacity: 0.9;
+        }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 2rem; }
+            .logo { font-size: 3rem; }
+            .tagline { font-size: 1rem; }
+            .quick-links { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="screen-reader-badge" id="screenReaderBadge">
+        🎤 Screen Reader Active
+    </div>
+
+    <div class="container">
+        <div class="logo">📚</div>
+        <h1>Welcome to ReadBuddy</h1>
+        <p class="tagline">Your AI-Powered Reading Companion</p>
+        
+        <div class="time-greeting" id="greeting">Good day!</div>
+
+        <div class="search-container">
+            <input 
+                type="text" 
+                class="search-box" 
+                id="searchBox"
+                placeholder="Search Google or type a URL..."
+                aria-label="Search Google or type a URL"
+            >
+        </div>
+
+        <div class="quick-links">
+            <a href="https://www.google.com" class="quick-link" aria-label="Go to Google">
+                <div class="quick-link-icon">🔍</div>
+                <div class="quick-link-title">Google</div>
+            </a>
+            <a href="https://www.youtube.com" class="quick-link" aria-label="Go to YouTube">
+                <div class="quick-link-icon">▶️</div>
+                <div class="quick-link-title">YouTube</div>
+            </a>
+            <a href="https://mail.google.com" class="quick-link" aria-label="Go to Gmail">
+                <div class="quick-link-icon">📧</div>
+                <div class="quick-link-title">Gmail</div>
+            </a>
+            <a href="https://github.com" class="quick-link" aria-label="Go to GitHub">
+                <div class="quick-link-icon">💻</div>
+                <div class="quick-link-title">GitHub</div>
+            </a>
+        </div>
+
+        <div class="features">
+            <div class="feature">
+                <span class="feature-icon">🎯</span>
+                <span>Smart Summarization</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🖼️</span>
+                <span>Image Analysis</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🎥</span>
+                <span>Video Insights</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">♿</span>
+                <span>Accessibility</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="keyboard-hint">
+        <kbd>Alt</kbd>+<kbd>A</kbd> Screen Reader | <kbd>Alt</kbd>+<kbd>H</kbd> Help | <kbd>Alt</kbd>+<kbd>W</kbd> Search | <kbd>Alt</kbd>+<kbd>1/2/3/4</kbd> Features
+    </div>
+
+    <!-- Load external JavaScript files -->
+    <script src="newtab.js"></script>
+    <script src="screenreader.js"></script>
+</body>
+</html>

@@ -76,7 +76,7 @@ chrome.commands.onCommand.addListener(async (command) => {
       
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        files: ['content.js']
+        files: ['content.js', 'screenreader.js']
       });
       
       console.log('✅ Content script injected, sending command...');

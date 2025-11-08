@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReadBuddy Screen Reader Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        h2 {
+            color: #764ba2;
+            margin-top: 30px;
+        }
+        
+        h3 {
+            color: #667eea;
+        }
+        
+        .highlight {
+            background: #fffacd;
+            padding: 15px;
+            border-left: 4px solid #667eea;
+            margin: 20px 0;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 10px 10px 0;
+            transition: transform 0.2s;
+        }
+        
+        button:hover {
+            transform: scale(1.05);
+        }
+        
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        label {
+            display: block;
+            font-weight: bold;
+            margin-top: 15px;
+            color: #333;
+        }
+        
+        a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        
+        a:hover {
+            text-decoration: underline;
+        }
+        
+        img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin: 15px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .instructions {
+            background: #e8f4f8;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .keyboard-shortcut {
+            display: inline-block;
+            background: #333;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: bold;
+            margin: 0 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ReadBuddy Screen Reader Test Page</h1>
+        
+        <div class="instructions">
+            <h3>🎤 How to Test Screen Reader Mode</h3>
+            <p><strong>Step 1:</strong> Press <span class="keyboard-shortcut">Ctrl+Shift+S</span> to activate Screen Reader</p>
+            <p><strong>Step 2:</strong> Listen to the welcome message</p>
+            <p><strong>Step 3:</strong> Press <span class="keyboard-shortcut">H</span> for help menu</p>
+            <p><strong>Step 4:</strong> Try navigation shortcuts below!</p>
+        </div>
+
+        <h2>Navigation Shortcuts to Test</h2>
+        
+        <div class="highlight">
+            <strong>🔹 Press <span class="keyboard-shortcut">J</span></strong> - Move to next element<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">K</span></strong> - Move to previous element<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">N</span></strong> - Jump to next heading<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">L</span></strong> - Jump to next link<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">B</span></strong> - Jump to next button<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">I</span></strong> - Jump to next image<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">F</span></strong> - Jump to next form field<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">T</span></strong> - Read page title<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">U</span></strong> - Read current URL<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">R</span></strong> - Repeat current element<br>
+            <strong>🔹 Press <span class="keyboard-shortcut">S</span></strong> - Stop speaking
+        </div>
+
+        <h2>Sample Headings (Test with N key)</h2>
+        <p>Press <span class="keyboard-shortcut">N</span> repeatedly to navigate through headings.</p>
+
+        <h3>This is Heading 3</h3>
+        <p>Some paragraph text here.</p>
+
+        <h3>Another Heading 3</h3>
+        <p>More paragraph text.</p>
+
+        <h2>Sample Links (Test with L key)</h2>
+        <p>Press <span class="keyboard-shortcut">L</span> to jump between links.</p>
+        
+        <p>
+            <a href="#link1">First Test Link</a> | 
+            <a href="#link2">Second Test Link</a> | 
+            <a href="#link3">Third Test Link</a>
+        </p>
+        
+        <p>Here's a link to <a href="https://www.google.com">Google</a> and another to <a href="https://www.wikipedia.org">Wikipedia</a>.</p>
+
+        <h2>Sample Buttons (Test with B key)</h2>
+        <p>Press <span class="keyboard-shortcut">B</span> to jump between buttons.</p>
+        
+        <button onclick="alert('Button 1 clicked!')">Click Me - Button 1</button>
+        <button onclick="alert('Button 2 clicked!')">Click Me - Button 2</button>
+        <button onclick="alert('Button 3 clicked!')">Click Me - Button 3</button>
+
+        <h2>Sample Images (Test with I key)</h2>
+        <p>Press <span class="keyboard-shortcut">I</span> to jump between images.</p>
+        
+        <img src="https://via.placeholder.com/400x200/667eea/ffffff?text=Test+Image+1" alt="First placeholder image with purple background">
+        
+        <img src="https://via.placeholder.com/400x200/764ba2/ffffff?text=Test+Image+2" alt="Second placeholder image with violet background">
+
+        <h2>Sample Form (Test with F key)</h2>
+        <p>Press <span class="keyboard-shortcut">F</span> to jump between form fields. Note: Screen Reader won't interfere when you're typing!</p>
+        
+        <form>
+            <label for="name">Name:</label>
+            <input type="text" id="name" name="name" placeholder="Enter your name">
+            
+            <label for="email">Email Address:</label>
+            <input type="email" id="email" name="email" placeholder="you@example.com">
+            
+            <label for="message">Message:</label>
+            <textarea id="message" name="message" rows="4" placeholder="Type your message here..."></textarea>
+            
+            <label for="country">Country:</label>
+            <select id="country" name="country">
+                <option value="">Select your country</option>
+                <option value="us">United States</option>
+                <option value="uk">United Kingdom</option>
+                <option value="ca">Canada</option>
+                <option value="au">Australia</option>
+            </select>
+            
+            <br><br>
+            <button type="submit">Submit Form</button>
+            <button type="reset">Reset Form</button>
+        </form>
+
+        <h2>Browser Action Tests</h2>
+        <p>Try these browser shortcuts while Screen Reader is active - you'll hear announcements:</p>
+        
+        <div class="highlight">
+            <strong>Try these shortcuts:</strong><br>
+            🔹 <span class="keyboard-shortcut">Ctrl+T</span> - New tab (will announce "Opening new tab")<br>
+            🔹 <span class="keyboard-shortcut">Ctrl+R</span> - Refresh (will announce "Refreshing page")<br>
+            🔹 <span class="keyboard-shortcut">Ctrl+F</span> - Find (will announce "Opening find dialog")<br>
+            🔹 <span class="keyboard-shortcut">Ctrl+P</span> - Print (will announce "Opening print dialog")<br>
+            🔹 <span class="keyboard-shortcut">Ctrl+D</span> - Bookmark (will announce "Bookmarking page")
+        </div>
+
+        <h2>Multiple Elements Test</h2>
+        <p>Use <span class="keyboard-shortcut">J</span> and <span class="keyboard-shortcut">K</span> to navigate through ALL elements sequentially:</p>
+        
+        <h3>Section 1</h3>
+        <p>This is a paragraph with a <a href="#">link inside</a>.</p>
+        <button>Action Button</button>
+        
+        <h3>Section 2</h3>
+        <p>Another paragraph with <a href="#">another link</a>.</p>
+        <img src="https://via.placeholder.com/300x150/667eea/ffffff?text=Mini+Image" alt="Small test image">
+        
+        <h3>Section 3</h3>
+        <p>Final section with a <a href="#">final link</a>.</p>
+        <button>Final Button</button>
+
+        <hr>
+        
+        <div class="instructions">
+            <h3>✅ Testing Checklist</h3>
+            <p><strong>Test these features:</strong></p>
+            <ul>
+                <li>✓ Activate with Ctrl+Shift+S</li>
+                <li>✓ Hear welcome message</li>
+                <li>✓ Press H for help</li>
+                <li>✓ Navigate with J/K through all elements</li>
+                <li>✓ Jump to headings with N</li>
+                <li>✓ Jump to links with L</li>
+                <li>✓ Jump to buttons with B</li>
+                <li>✓ Jump to images with I</li>
+                <li>✓ Jump to form fields with F</li>
+                <li>✓ Read title with T</li>
+                <li>✓ Read URL with U</li>
+                <li>✓ Repeat element with R</li>
+                <li>✓ Stop speech with S or Escape</li>
+                <li>✓ Type in form fields (shortcuts shouldn't interfere)</li>
+                <li>✓ See purple outline on focused elements</li>
+                <li>✓ See "Screen Reader Active" badge in top-right</li>
+                <li>✓ Deactivate with Ctrl+Shift+S</li>
+            </ul>
+        </div>
+
+        <footer style="margin-top: 50px; padding-top: 20px; border-top: 2px solid #ddd; text-align: center; color: #666;">
+            <p><strong>ReadBuddy Screen Reader Test Page</strong></p>
+            <p>Version 1.0 | Created for accessibility testing</p>
+        </footer>
+    </div>
+
+    <script>
+        // Prevent default form submission for testing
+        document.querySelector('form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            alert('Form submitted! (Test mode - not actually sent)');
+        });
+    </script>
+</body>
+</html>
