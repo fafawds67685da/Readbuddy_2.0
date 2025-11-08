@@ -242,7 +242,58 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
       throw new Error(`Backend returned ${response.status}`);
     }
 
-    const data = await response.json();
+    // Handle streaming response (Server-Sent Events)
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    let data = {
+      summaries: [],
+      image_descriptions: [],
+      video_descriptions: [],
+      count: { images_processed: 0, videos_processed: 0, text_chunks: 0 }
+    };
+    
+    let buffer = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const messages = buffer.split('\n\n');
+      buffer = messages.pop() || '';
+      
+      for (const message of messages) {
+        if (!message.trim() || !message.startsWith('data: ')) continue;
+        
+        try {
+          const jsonStr = message.substring(6);
+          const eventData = JSON.parse(jsonStr);
+          
+          switch (eventData.type) {
+            case 'text_summaries':
+              data.summaries = eventData.data;
+              console.log(`📝 Text summaries received: ${eventData.data.length} chunks`);
+              break;
+            case 'image_caption':
+              data.image_descriptions.push(eventData.data);
+              console.log(`🖼️ Image caption ${eventData.data.index}/${eventData.data.total}: ${eventData.data.caption?.substring(0, 50)}...`);
+              break;
+            case 'video_description':
+              data.video_descriptions.push(eventData.data);
+              console.log(`🎥 Video description received`);
+              break;
+            case 'complete':
+              data.count = eventData.data;
+              console.log(`✅ Processing complete: ${eventData.data.images_processed} images`);
+              break;
+          }
+        } catch (e) {
+          console.error('❌ Error parsing stream message:', e);
+        }
+      }
+    }
+
     lastResults = data;
     
     showLoading(false);

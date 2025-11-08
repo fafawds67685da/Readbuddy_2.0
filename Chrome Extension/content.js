@@ -826,6 +826,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       stopSpeaking();
       sendResponse({ success: true });
       break;
+    
+    case 'newImageCaption':
+      // Real-time image caption from streaming backend
+      console.log(`🖼️ Real-time caption ${request.caption.index}/${request.caption.total}: ${request.caption.caption?.substring(0, 50)}...`);
+      
+      // Speak the caption immediately as it arrives
+      const captionText = `Image ${request.caption.index}: ${request.caption.caption}`;
+      speak(captionText);
+      
+      sendResponse({ success: true });
+      break;
   }
   return true;
 });
@@ -1027,7 +1038,7 @@ async function describeImages() {
   }
   
   try {
-    speak(`Analyzing ${images.length} images. Please wait.`);
+    speak(`Analyzing ${images.length} images. Captions will be spoken as they are generated.`);
     
     // Send to background.js to call /analyze-page (EXACT SAME as sidepanel button)
     chrome.runtime.sendMessage({
@@ -1050,24 +1061,13 @@ async function describeImages() {
       
       console.log("✅ Full page analysis result:", response.result);
       
-      // Extract and speak ONLY the image descriptions
-      if (response.result.image_descriptions && response.result.image_descriptions.length > 0) {
-        const validDescriptions = response.result.image_descriptions.filter(desc => 
-          desc.caption && !desc.caption.includes("No valid images")
-        );
-        
-        if (validDescriptions.length > 0) {
-          const descriptions = validDescriptions
-            .map((desc, idx) => `Image ${idx + 1}: ${desc.caption}`)
-            .join(". ");
-          
-          console.log("📢 Speaking image descriptions:", descriptions);
-          speak(descriptions);
-        } else {
-          speak("Could not describe images.");
-        }
+      // Don't speak all captions at once - they're already being spoken in real-time
+      // Just announce completion
+      const imageCount = response.result.count?.images_processed || 0;
+      if (imageCount > 0) {
+        speak(`Analysis complete. Described ${imageCount} images.`);
       } else {
-        speak("Could not describe images.");
+        speak("Could not describe any images.");
       }
     });
     
@@ -1354,16 +1354,27 @@ ReadBuddyScreenReader.prototype.analyzePage = function() {
         videos.push(src);
       }
     });
-    fetch("http://127.0.0.1:8000/analyze-page", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, images: images, videos: videos.slice(0, 5) })
-    })
-    .then(function(response) { return response.json(); })
-    .then(function(data) { self.speakAnalysisResults(data); })
-    .catch(function(error) {
-      self.speak("Error analyzing page: " + error.message);
-      console.error("Analysis error:", error);
+    
+    // Use background.js to handle streaming response
+    chrome.runtime.sendMessage({
+      action: 'analyzeFullPage',
+      text: text,
+      images: images,
+      videos: videos.slice(0, 5)
+    }, function(response) {
+      if (chrome.runtime.lastError) {
+        console.error("❌ Message error:", chrome.runtime.lastError);
+        self.speak("Failed to communicate with extension.");
+        return;
+      }
+      
+      if (!response || !response.success) {
+        console.error("❌ Backend error:", response?.error);
+        self.speak("Error analyzing page. Make sure the backend server is running.");
+        return;
+      }
+      
+      self.speakAnalysisResults(response.result);
     });
   } catch (error) {
     self.speak("Error analyzing page: " + error.message);

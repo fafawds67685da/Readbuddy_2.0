@@ -12,7 +12,7 @@ from torchvision import transforms
 from PIL import Image, UnidentifiedImageError
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from transformers import (
     pipeline, 
@@ -782,7 +782,7 @@ async def options_summarize_captions():
 async def analyze_page(request: Request):
     """
     Receives webpage text + image URLs + video URLs from Chrome extension.
-    Returns summarized text, AI-generated image captions, and video descriptions.
+    Streams back results as they are generated (SSE format).
     """
     try:
         data = await request.json()
@@ -792,128 +792,135 @@ async def analyze_page(request: Request):
         
         print(f"📥 Received {len(image_urls)} images, {len(video_urls)} videos")
         
-        # --- TEXT SUMMARIZATION ---
-        summaries = []
-        if text and text.strip():
-            chunks = [text[i:i + 2000] for i in range(0, len(text), 2000)]
-            for idx, chunk in enumerate(chunks, 1):
-                try:
-                    summary = summarizer(chunk, max_length=130, min_length=30, do_sample=False)
-                    summaries.append(summary[0]["summary_text"])
-                except Exception as e:
-                    summaries.append(f"⚠️ Error summarizing chunk {idx}: {str(e)}")
-        else:
-            summaries = ["No readable text found on this page."]
-
-        # --- IMAGE CAPTIONING ---
-        image_descriptions = []
-        valid_images = 0
-        
-        for idx, url in enumerate(image_urls, 1):
-            # Process all images but limit results to 5
-            if valid_images >= 5:
-                print(f"   ⏭️ Skipping image {idx}/{len(image_urls)} - already have 5 captions")
-                break
-                
-            if not url.startswith("http"):
-                print(f"   ⏭️ Skipping image {idx}/{len(image_urls)} - not HTTP URL")
-                continue
-
-            try:
-                print(f"   📥 Processing image {idx}/{len(image_urls)}: {url[:60]}...")
-                image_data = download_image_safe(url)
-                img = Image.open(io.BytesIO(image_data))
-                
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                width, height = img.size
-                print(f"      Image size: {width}x{height}")
-                
-                if width < 50 or height < 50:
-                    print(f"   ⏭️ Skipping image {idx} - too small ({width}x{height})")
-                    continue
-                
-                max_size = 384
-                if max(width, height) > max_size:
-                    ratio = max_size / max(width, height)
-                    new_width = int(width * ratio)
-                    new_height = int(height * ratio)
-                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                    print(f"      Resized to: {new_width}x{new_height}")
-                
-                caption_text = generate_caption_safe(img)
-                
-                if caption_text:
-                    image_descriptions.append({
-                        "url": url,
-                        "caption": caption_text,
-                        "size": f"{width}x{height}"
-                    })
-                    valid_images += 1
-                    print(f"   ✅ Caption {valid_images}: {caption_text[:60]}...")
-                else:
-                    print(f"   ⚠️ Image {idx} - caption generation returned None")
-                
-            except UnidentifiedImageError as e:
-                print(f"   ❌ Image {idx} - UnidentifiedImageError: {str(e)[:100]}")
-                continue
-            except requests.exceptions.RequestException as e:
-                print(f"   ❌ Image {idx} - Network error: {str(e)[:100]}")
-                continue
-            except Exception as e:
-                print(f"   ❌ Image {idx} - Unexpected error: {str(e)[:100]}")
-                continue
-
-        if not image_descriptions:
-            image_descriptions = [{"caption": "No valid images found or could not generate captions.", "url": "", "size": ""}]
-
-        # --- VIDEO ANALYSIS ---
-        video_descriptions = []
-        valid_videos = 0
-        
-        for idx, url in enumerate(video_urls, 1):
-            if valid_videos >= 3:
-                break
+        async def generate_stream():
+            import json
             
-            try:
-                youtube_id = extract_youtube_id(url)
-                
-                if youtube_id:
-                    description = f"YouTube video detected (ID: {youtube_id}). Visual analysis is available via '/analyze-video-frame' or '/analyze-video-sequence' endpoint."
-                    video_type = "youtube"
-                else:
-                    description = "Video detected. Detailed analysis requires the separate visual frame analysis feature from the extension."
-                    video_type = "video"
-                
-                video_descriptions.append({
-                    "url": url,
-                    "type": video_type,
-                    "description": description,
-                    "method": "detection"
-                })
-                valid_videos += 1
+            # --- TEXT SUMMARIZATION ---
+            summaries = []
+            if text and text.strip():
+                chunks = [text[i:i + 2000] for i in range(0, len(text), 2000)]
+                for idx, chunk in enumerate(chunks, 1):
+                    try:
+                        summary = summarizer(chunk, max_length=130, min_length=30, do_sample=False)
+                        summaries.append(summary[0]["summary_text"])
+                    except Exception as e:
+                        summaries.append(f"⚠️ Error summarizing chunk {idx}: {str(e)}")
+            else:
+                summaries = ["No readable text found on this page."]
+            
+            # Send text summaries first
+            yield f"data: {json.dumps({'type': 'text_summaries', 'data': summaries})}\n\n"
+            
+            # --- IMAGE CAPTIONING (NO LIMIT) ---
+            valid_images = 0
+            
+            for idx, url in enumerate(image_urls, 1):
+                if not url.startswith("http"):
+                    print(f"   ⏭️ Skipping image {idx}/{len(image_urls)} - not HTTP URL")
+                    continue
+
+                try:
+                    print(f"   📥 Processing image {idx}/{len(image_urls)}: {url[:60]}...")
+                    image_data = download_image_safe(url)
+                    img = Image.open(io.BytesIO(image_data))
+                    
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    width, height = img.size
+                    print(f"      Image size: {width}x{height}")
+                    
+                    if width < 50 or height < 50:
+                        print(f"   ⏭️ Skipping image {idx} - too small ({width}x{height})")
+                        continue
+                    
+                    max_size = 384
+                    if max(width, height) > max_size:
+                        ratio = max_size / max(width, height)
+                        new_width = int(width * ratio)
+                        new_height = int(height * ratio)
+                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                        print(f"      Resized to: {new_width}x{new_height}")
+                    
+                    caption_text = generate_caption_safe(img)
+                    
+                    if caption_text:
+                        valid_images += 1
+                        caption_data = {
+                            "url": url,
+                            "caption": caption_text,
+                            "size": f"{width}x{height}",
+                            "index": valid_images,
+                            "total": len(image_urls)
+                        }
+                        print(f"   ✅ Caption {valid_images}: {caption_text[:60]}...")
                         
-            except Exception:
-                continue
+                        # Stream this caption immediately
+                        yield f"data: {json.dumps({'type': 'image_caption', 'data': caption_data})}\n\n"
+                    else:
+                        print(f"   ⚠️ Image {idx} - caption generation returned None")
+                    
+                except UnidentifiedImageError as e:
+                    print(f"   ❌ Image {idx} - UnidentifiedImageError: {str(e)[:100]}")
+                    continue
+                except requests.exceptions.RequestException as e:
+                    print(f"   ❌ Image {idx} - Network error: {str(e)[:100]}")
+                    continue
+                except Exception as e:
+                    print(f"   ❌ Image {idx} - Unexpected error: {str(e)[:100]}")
+                    continue
 
-        if not video_descriptions:
-            video_descriptions = [{"description": "No videos found on this page.", "url": "", "type": "none"}]
+            if valid_images == 0:
+                yield f"data: {json.dumps({'type': 'image_caption', 'data': {'caption': 'No valid images found or could not generate captions.', 'url': '', 'size': ''}})}\n\n"
 
-        print(f"✅ Processing complete: {valid_images} images, {valid_videos} videos, {len(summaries)} text chunks")
+            # --- VIDEO ANALYSIS ---
+            valid_videos = 0
+            
+            for idx, url in enumerate(video_urls, 1):
+                if valid_videos >= 3:
+                    break
+                
+                try:
+                    youtube_id = extract_youtube_id(url)
+                    
+                    if youtube_id:
+                        description = f"YouTube video detected (ID: {youtube_id}). Visual analysis is available via '/analyze-video-frame' or '/analyze-video-sequence' endpoint."
+                        video_type = "youtube"
+                    else:
+                        description = "Video detected. Detailed analysis requires the separate visual frame analysis feature from the extension."
+                        video_type = "video"
+                    
+                    video_data = {
+                        "url": url,
+                        "type": video_type,
+                        "description": description,
+                        "method": "detection"
+                    }
+                    valid_videos += 1
+                    
+                    # Stream video info
+                    yield f"data: {json.dumps({'type': 'video_description', 'data': video_data})}\n\n"
+                            
+                except Exception:
+                    continue
+
+            if valid_videos == 0:
+                yield f"data: {json.dumps({'type': 'video_description', 'data': {'description': 'No videos found on this page.', 'url': '', 'type': 'none'}})}\n\n"
+
+            print(f"✅ Processing complete: {valid_images} images, {valid_videos} videos, {len(summaries)} text chunks")
+            
+            # Send completion message
+            yield f"data: {json.dumps({'type': 'complete', 'data': {'images_processed': valid_images, 'videos_processed': valid_videos, 'text_chunks': len(summaries)}})}\n\n"
         
-        return {
-            "summaries": summaries,
-            "image_descriptions": image_descriptions,
-            "video_descriptions": video_descriptions,
-            "count": {
-                "images_processed": valid_images,
-                "images_received": len(image_urls),
-                "videos_processed": valid_videos,
-                "videos_received": len(video_urls),
-                "text_chunks": len(summaries)
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
             }
-        }
+        )
         
     except Exception as e:
         print(f"❌ Error in /analyze-page: {e}")

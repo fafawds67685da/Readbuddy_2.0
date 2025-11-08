@@ -584,10 +584,50 @@ async function analyzePageContent(text) {
       throw new Error(`Backend page analysis failed: ${response.status}`);
     }
     
-    const data = await response.json();
-    console.log("✅ Page content analyzed successfully");
+    // Handle streaming response (Server-Sent Events)
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
     
-    return data;
+    let result = {
+      summaries: [],
+      image_descriptions: [],
+      video_descriptions: [],
+      count: { images_processed: 0, videos_processed: 0, text_chunks: 0 }
+    };
+    
+    let buffer = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const messages = buffer.split('\n\n');
+      buffer = messages.pop() || '';
+      
+      for (const message of messages) {
+        if (!message.trim() || !message.startsWith('data: ')) continue;
+        
+        try {
+          const jsonStr = message.substring(6);
+          const data = JSON.parse(jsonStr);
+          
+          switch (data.type) {
+            case 'text_summaries':
+              result.summaries = data.data;
+              break;
+            case 'complete':
+              result.count = data.data;
+              break;
+          }
+        } catch (e) {
+          console.error('❌ Error parsing stream message:', e);
+        }
+      }
+    }
+    
+    console.log("✅ Page content analyzed successfully");
+    return result;
     
   } catch (error) {
     console.error("❌ Background Script Error during page analysis:", error);
@@ -622,10 +662,61 @@ async function analyzePageImages(imageUrls) {
       throw new Error(`Backend image analysis failed: ${response.status}`);
     }
     
-    const data = await response.json();
-    console.log("✅ Images analyzed successfully");
+    // Handle streaming response (Server-Sent Events)
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
     
-    return data;
+    let result = {
+      summaries: [],
+      image_descriptions: [],
+      video_descriptions: [],
+      count: { images_processed: 0, videos_processed: 0, text_chunks: 0 }
+    };
+    
+    let buffer = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const messages = buffer.split('\n\n');
+      buffer = messages.pop() || '';
+      
+      for (const message of messages) {
+        if (!message.trim() || !message.startsWith('data: ')) continue;
+        
+        try {
+          const jsonStr = message.substring(6);
+          const data = JSON.parse(jsonStr);
+          
+          switch (data.type) {
+            case 'image_caption':
+              result.image_descriptions.push(data.data);
+              console.log(`🖼️ Image caption ${data.data.index}/${data.data.total}: ${data.data.caption?.substring(0, 50)}...`);
+              
+              // Notify content script about new caption (real-time)
+              chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (tabs[0]) {
+                  chrome.tabs.sendMessage(tabs[0].id, {
+                    action: 'newImageCaption',
+                    caption: data.data
+                  });
+                }
+              });
+              break;
+            case 'complete':
+              result.count = data.data;
+              break;
+          }
+        } catch (e) {
+          console.error('❌ Error parsing stream message:', e);
+        }
+      }
+    }
+    
+    console.log("✅ Images analyzed successfully");
+    return result;
     
   } catch (error) {
     console.error("❌ Background Script Error during image analysis:", error);
@@ -662,10 +753,87 @@ async function analyzeFullPage(text, imageUrls, videoUrls) {
       throw new Error(`Backend full page analysis failed: ${response.status}`);
     }
     
-    const data = await response.json();
+    // Handle streaming response (Server-Sent Events)
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    let result = {
+      summaries: [],
+      image_descriptions: [],
+      video_descriptions: [],
+      count: {
+        images_processed: 0,
+        videos_processed: 0,
+        text_chunks: 0
+      }
+    };
+    
+    let buffer = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) {
+        console.log("✅ Full page stream completed");
+        break;
+      }
+      
+      // Decode and add to buffer
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Process complete messages (ending with \n\n)
+      const messages = buffer.split('\n\n');
+      buffer = messages.pop() || ''; // Keep incomplete message in buffer
+      
+      for (const message of messages) {
+        if (!message.trim() || !message.startsWith('data: ')) continue;
+        
+        try {
+          const jsonStr = message.substring(6); // Remove 'data: ' prefix
+          const data = JSON.parse(jsonStr);
+          
+          console.log(`📨 Received stream event:`, data.type);
+          
+          switch (data.type) {
+            case 'text_summaries':
+              result.summaries = data.data;
+              console.log(`📝 Text summaries received: ${data.data.length} chunks`);
+              break;
+              
+            case 'image_caption':
+              result.image_descriptions.push(data.data);
+              console.log(`🖼️ Image caption ${data.data.index}/${data.data.total}: ${data.data.caption?.substring(0, 50)}...`);
+              
+              // Notify content script about new caption (real-time)
+              chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (tabs[0]) {
+                  chrome.tabs.sendMessage(tabs[0].id, {
+                    action: 'newImageCaption',
+                    caption: data.data
+                  });
+                }
+              });
+              break;
+              
+            case 'video_description':
+              result.video_descriptions.push(data.data);
+              console.log(`🎥 Video description received`);
+              break;
+              
+            case 'complete':
+              result.count = data.data;
+              console.log(`✅ Processing complete: ${data.data.images_processed} images`);
+              break;
+          }
+        } catch (e) {
+          console.error('❌ Error parsing stream message:', e, message);
+        }
+      }
+    }
+    
     console.log("✅ Full page analyzed successfully");
     
-    return data;
+    return result;
     
   } catch (error) {
     console.error("❌ Background Script Error during full page analysis:", error);
