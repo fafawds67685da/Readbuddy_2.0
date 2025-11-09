@@ -567,8 +567,6 @@ class ScreenReader {
 
   // Extract all visible text from the page
   extractAllVisibleText() {
-    const elementsToRead = [];
-    
     // Get main content area if it exists
     const mainContent = document.querySelector('main') || 
                         document.querySelector('[role="main"]') ||
@@ -589,41 +587,62 @@ class ScreenReader {
     // Helper function to check if element should be skipped
     const shouldSkip = (element) => {
       const tagName = element.tagName.toLowerCase();
-      const skipTags = ['script', 'style', 'noscript', 'iframe', 'svg', 'path'];
+      const skipTags = ['script', 'style', 'noscript', 'iframe', 'svg', 'path', 'nav', 'header', 'footer'];
       return skipTags.includes(tagName) || 
              element.hasAttribute('aria-hidden') ||
              element.classList.contains('readbuddy-link-highlight');
     };
     
-    // Extract text from headings, paragraphs, lists, etc.
-    const contentSelectors = [
-      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',  // Headings
-      'p',                                   // Paragraphs
-      'li',                                  // List items
-      'td', 'th',                           // Table cells
-      'blockquote',                         // Quotes
-      'figcaption',                         // Figure captions
-      'label',                              // Form labels
-      '[role="heading"]',                   // ARIA headings
-      '[role="article"]'                    // ARIA articles
-    ];
+    // Get all readable elements in document order (not by type)
+    const readableSelector = 'h1, h2, h3, h4, h5, h6, p, li, td, th, blockquote, figcaption, label, [role="heading"], [role="article"]';
+    const allElements = mainContent.querySelectorAll(readableSelector);
     
-    contentSelectors.forEach(selector => {
-      const elements = mainContent.querySelectorAll(selector);
-      elements.forEach(el => {
-        if (isVisible(el) && !shouldSkip(el)) {
-          const text = el.textContent.trim();
-          // Only add if it has substantial text (more than 3 characters)
-          if (text.length > 3) {
-            // Add heading level or paragraph markers
-            let prefix = '';
-            if (el.tagName.match(/^H[1-6]$/)) {
-              prefix = `Heading level ${el.tagName[1]}. `;
-            }
-            elementsToRead.push(prefix + text);
+    const elementsToRead = [];
+    const processedElements = new Set(); // Track to avoid duplicates
+    
+    // Process elements in the order they appear in the DOM
+    allElements.forEach(el => {
+      // Skip if already processed, not visible, or should be skipped
+      if (processedElements.has(el) || !isVisible(el) || shouldSkip(el)) {
+        return;
+      }
+      
+      // Skip if this element is nested inside another readable element we'll process
+      let parent = el.parentElement;
+      let isNested = false;
+      while (parent && parent !== mainContent) {
+        if (allElements && Array.from(allElements).includes(parent)) {
+          isNested = true;
+          break;
+        }
+        parent = parent.parentElement;
+      }
+      
+      if (isNested) return;
+      
+      const text = el.textContent.trim();
+      // Only add if it has substantial text (more than 3 characters)
+      if (text.length > 3) {
+        // Add heading level markers for context
+        let prefix = '';
+        if (el.tagName.match(/^H[1-6]$/)) {
+          prefix = `Heading level ${el.tagName[1]}. `;
+        } else if (el.tagName === 'LI') {
+          // Check if it's in an ordered or unordered list
+          const parentList = el.closest('ol, ul');
+          if (parentList && parentList.tagName === 'OL') {
+            // For ordered lists, get the item number
+            const items = Array.from(parentList.children);
+            const index = items.indexOf(el) + 1;
+            prefix = `${index}. `;
+          } else {
+            prefix = 'Bullet. ';
           }
         }
-      });
+        
+        elementsToRead.push(prefix + text);
+        processedElements.add(el);
+      }
     });
     
     // Join all text with pauses (periods create natural pauses in TTS)

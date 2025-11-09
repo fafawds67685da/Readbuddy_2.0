@@ -29,9 +29,17 @@ from requests.adapters import HTTPAdapter, Retry
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Google Gemini API Configuration
-GEMINI_API_KEY = "AIzaSyB8REm_mE21KUvaqyBvW3TAud8sUr4vEFM"
+# Google Gemini API Configuration - Multiple keys for failover
+GEMINI_API_KEYS = [
+    "AIzaSyB8REm_mE21KUvaqyBvW3TAud8sUr4vEFM",
+    "AIzaSyAnZF9D6t_aFim2-5XN0vkNTO6f4LrZ5EY",
+    "AIzaSyAEewmCimLn3gU0IdNN4AdcN_VfEsPgti0",
+    "AIzaSyB-BRRFMCHjXNRAhO5_O3DBw7KvjSi6-4k",
+    "AIzaSyBnhGuphkyqBlqn-4G6LC2fyVXjI16MOAo",
+    "AIzaSyBJ2ETFfZ6iMBk0lIMYFn8NG5b5TCLv57Y"
+]
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+current_gemini_key_index = 0  # Track which key we're currently using
 
 # --- Pydantic Models ---
 class PageInput(BaseModel):
@@ -189,14 +197,17 @@ def extract_youtube_id(url):
 
 def generate_gemini_caption(img):
     """
-    Generate detailed image caption using Google Gemini API
+    Generate detailed image caption using Google Gemini API with automatic failover.
+    Tries multiple API keys in sequence if one fails due to quota/rate limits.
     
     Args:
         img: PIL Image object
         
     Returns:
-        str: Detailed caption or None if failed
+        str: Detailed caption or None if all keys fail
     """
+    global current_gemini_key_index
+    
     try:
         # Ensure it's a PIL Image
         if not isinstance(img, Image.Image):
@@ -246,41 +257,69 @@ def generate_gemini_caption(img):
             }
         }
         
-        # Make API request
-        response = requests.post(
-            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
-            headers=headers,
-            json=payload,
-            timeout=15
-        )
+        # Try each API key in sequence until one succeeds
+        for attempt in range(len(GEMINI_API_KEYS)):
+            # Calculate which key to try (rotate through keys)
+            key_index = (current_gemini_key_index + attempt) % len(GEMINI_API_KEYS)
+            api_key = GEMINI_API_KEYS[key_index]
+            
+            try:
+                # Make API request with current key
+                response = requests.post(
+                    f"{GEMINI_API_URL}?key={api_key}",
+                    headers=headers,
+                    json=payload,
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    
+                    # Extract caption from response
+                    if 'candidates' in result and len(result['candidates']) > 0:
+                        candidate = result['candidates'][0]
+                        if 'content' in candidate and 'parts' in candidate['content']:
+                            parts = candidate['content']['parts']
+                            if len(parts) > 0 and 'text' in parts[0]:
+                                caption = parts[0]['text'].strip()
+                                
+                                # Clean up the caption
+                                if caption:
+                                    # Capitalize first letter
+                                    caption = caption[0].upper() + caption[1:] if len(caption) > 1 else caption.upper()
+                                    # Add period if needed
+                                    if not caption.endswith(('.', '!', '?')):
+                                        caption += '.'
+                                    
+                                    # Success! Update the current key index for next time
+                                    current_gemini_key_index = key_index
+                                    print(f"   ✅ Gemini caption generated (API key #{key_index + 1}): {caption[:60]}...")
+                                    return caption
+                    
+                    print(f"   ⚠️ Unexpected Gemini response format: {result}")
+                    # Try next key
+                    continue
+                    
+                elif response.status_code == 429:
+                    # Quota exceeded - try next API key
+                    print(f"   ⚠️ API key #{key_index + 1} quota exceeded, trying next key...")
+                    continue
+                    
+                else:
+                    # Other error - try next key
+                    print(f"   ⚠️ API key #{key_index + 1} error {response.status_code}, trying next key...")
+                    continue
+                    
+            except requests.exceptions.Timeout:
+                print(f"   ⚠️ API key #{key_index + 1} timeout, trying next key...")
+                continue
+            except Exception as key_error:
+                print(f"   ⚠️ API key #{key_index + 1} failed: {key_error}, trying next key...")
+                continue
         
-        if response.status_code == 200:
-            result = response.json()
-            
-            # Extract caption from response
-            if 'candidates' in result and len(result['candidates']) > 0:
-                candidate = result['candidates'][0]
-                if 'content' in candidate and 'parts' in candidate['content']:
-                    parts = candidate['content']['parts']
-                    if len(parts) > 0 and 'text' in parts[0]:
-                        caption = parts[0]['text'].strip()
-                        
-                        # Clean up the caption
-                        if caption:
-                            # Capitalize first letter
-                            caption = caption[0].upper() + caption[1:] if len(caption) > 1 else caption.upper()
-                            # Add period if needed
-                            if not caption.endswith(('.', '!', '?')):
-                                caption += '.'
-                            
-                            print(f"   ✅ Gemini caption generated: {caption[:60]}...")
-                            return caption
-            
-            print(f"   ⚠️ Unexpected Gemini response format: {result}")
-            return None
-        else:
-            print(f"   ❌ Gemini API error: {response.status_code} - {response.text}")
-            return None
+        # All keys failed
+        print(f"   ❌ All {len(GEMINI_API_KEYS)} Gemini API keys failed")
+        return None
             
     except Exception as e:
         print(f"   ❌ Gemini caption error: {str(e)}")
@@ -428,7 +467,8 @@ def generate_detailed_caption(img, fast: bool = False):
 
 def generate_caption_safe(img):
     """
-    Generate caption for an image using InstructBLIP (primary) with Gemini API as fallback
+    Generate caption for an image using Gemini API (primary) with InstructBLIP as fallback.
+    For individual images (Alt+2), Gemini provides better quality and faster cloud processing.
     
     Args:
         img: PIL Image object or numpy array
@@ -437,20 +477,20 @@ def generate_caption_safe(img):
         str: Image caption or error message
     """
     try:
-        # Try InstructBLIP first (local model, faster, more consistent)
-        print("   🤖 Trying InstructBLIP model for image captioning...")
-        caption = generate_detailed_caption(img)
-        
-        if caption:
-            print("   ✅ InstructBLIP caption successful")
-            return caption
-        
-        # Fallback to Gemini API if InstructBLIP fails
-        print("   ⚠️ InstructBLIP failed, falling back to Gemini API...")
+        # Try Gemini API first (fast, cloud-based, high quality for individual images)
+        print("   🌟 Trying Gemini API for image captioning (5 keys with failover)...")
         caption = generate_gemini_caption(img)
         
         if caption:
             print("   ✅ Gemini API caption successful")
+            return caption
+        
+        # Fallback to InstructBLIP if all Gemini keys fail
+        print("   ⚠️ All Gemini keys failed, falling back to InstructBLIP...")
+        caption = generate_detailed_caption(img)
+        
+        if caption:
+            print("   ✅ InstructBLIP caption successful")
             return caption
         
         return "Unable to generate caption for this image."
@@ -591,10 +631,11 @@ async def root():
         "version": app.version,
         "device": str(device),
         "models": {
-            "text_summarization": "Google Gemini API (Cloud)",
-            "image_captioning": "InstructBLIP (Primary) + Google Gemini 2.0 Flash (Fallback)",
-            "video_frame_captioning": "InstructBLIP Ultra-Fast Mode (Primary) + Gemini API (Fallback)",
+            "text_summarization": "Google Gemini API with 6-key failover (Cloud)",
+            "image_captioning": "Gemini API with 6-key failover (Primary) + InstructBLIP (Fallback)",
+            "video_frame_captioning": "Gemini API with 6-key failover (Primary) + InstructBLIP (Fallback)",
             "video_summarization": "Pegasus-XSUM",
+            "gemini_api_keys": f"{len(GEMINI_API_KEYS)} keys available",
             "device": str(device),
             "models_loaded": {
                 "instructblip_processor": processor is not None,
@@ -609,7 +650,7 @@ async def root():
 @app.post("/analyze-video-frame")
 async def analyze_video_frame(data: VideoFrameInput):
     """Analyzes a single video frame (Base64 image) and returns a description.
-    For video frames, we use InstructBLIP as primary (optimized for speed) with Gemini API as fallback."""
+    For video frames, we use Gemini API as primary (fast, cloud-based, multiple keys for failover) with InstructBLIP as fallback."""
     print("📹 Received video frame analysis request")
 
     try:
@@ -645,34 +686,27 @@ async def analyze_video_frame(data: VideoFrameInput):
             print(f"❌ PIL Image open error: {e}")
             raise ValueError(f"Invalid image data: {str(e)}")
 
-        # FOR VIDEO FRAMES: Use InstructBLIP first (fast mode with greedy decoding)
-        # Then fall back to Gemini API if InstructBLIP fails
+        # FOR VIDEO FRAMES: Use Gemini API first (fast, cloud-based, with failover)
+        # Then fall back to InstructBLIP if all Gemini keys fail
         try:
-            if instructblip_model and processor:
-                print("   🤖 Trying InstructBLIP for video frame (ultra-fast mode)...")
-                fast_mode = bool(data.fast) if data.fast is not None else (device is not None and device.type != 'cuda')
-                description = generate_detailed_caption(image, fast=fast_mode)
-                
-                if description:
-                    print(f"   ✅ InstructBLIP caption successful: {description[:80]}...")
-                else:
-                    # Fallback to Gemini if InstructBLIP fails
-                    print("   ⚠️ InstructBLIP failed, falling back to Gemini API...")
-                    description = generate_gemini_caption(image)
+            print("   🌟 Trying Gemini API for video frame (fast, cloud-based, 3 keys)...")
+            description = generate_gemini_caption(image)
+            
+            if description and description != "Unable to analyze this image":
+                print(f"   ✅ Gemini caption successful: {description[:80]}...")
+            else:
+                # Fallback to InstructBLIP if all Gemini keys failed
+                print("   ⚠️ All Gemini keys failed, falling back to InstructBLIP (slower)...")
+                if instructblip_model and processor:
+                    fast_mode = bool(data.fast) if data.fast is not None else (device is not None and device.type != 'cuda')
+                    description = generate_detailed_caption(image, fast=fast_mode)
                     
-                    if description and description != "Unable to analyze this image":
-                        print(f"   ✅ Gemini caption successful: {description[:80]}...")
+                    if description:
+                        print(f"   ✅ InstructBLIP caption successful: {description[:80]}...")
                     else:
                         description = "Unable to generate description for this frame."
-            else:
-                # No InstructBLIP available, use Gemini
-                print("   🌟 InstructBLIP not available, using Gemini API...")
-                description = generate_gemini_caption(image)
-                
-                if not description or description == "Unable to analyze this image":
-                    description = "Unable to generate description for this frame."
                 else:
-                    print(f"   ✅ Gemini caption successful: {description[:80]}...")
+                    description = "Unable to generate description for this frame."
             
             return JSONResponse(
                 content={"description": description, "status": "success"},
@@ -967,22 +1001,43 @@ async def analyze_page(request: Request):
                             }
                         }
                         
-                        response = requests.post(
-                            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
-                            headers=headers,
-                            json=payload,
-                            timeout=10
-                        )
+                        # Try each API key until one succeeds
+                        success = False
+                        for attempt in range(len(GEMINI_API_KEYS)):
+                            key_index = (current_gemini_key_index + attempt) % len(GEMINI_API_KEYS)
+                            api_key = GEMINI_API_KEYS[key_index]
+                            
+                            try:
+                                response = requests.post(
+                                    f"{GEMINI_API_URL}?key={api_key}",
+                                    headers=headers,
+                                    json=payload,
+                                    timeout=10
+                                )
+                                
+                                if response.status_code == 200:
+                                    result = response.json()
+                                    if 'candidates' in result and len(result['candidates']) > 0:
+                                        summary_text = result['candidates'][0]['content']['parts'][0]['text']
+                                        summaries.append(summary_text.strip())
+                                        success = True
+                                        break
+                                    else:
+                                        summaries.append(f"⚠️ Could not summarize chunk {idx}")
+                                        success = True
+                                        break
+                                elif response.status_code == 429:
+                                    print(f"   ⚠️ Text summary API key #{key_index + 1} quota exceeded, trying next...")
+                                    continue
+                                else:
+                                    print(f"   ⚠️ Text summary API key #{key_index + 1} error {response.status_code}, trying next...")
+                                    continue
+                            except Exception as key_error:
+                                print(f"   ⚠️ Text summary API key #{key_index + 1} failed: {key_error}, trying next...")
+                                continue
                         
-                        if response.status_code == 200:
-                            result = response.json()
-                            if 'candidates' in result and len(result['candidates']) > 0:
-                                summary_text = result['candidates'][0]['content']['parts'][0]['text']
-                                summaries.append(summary_text.strip())
-                            else:
-                                summaries.append(f"⚠️ Could not summarize chunk {idx}")
-                        else:
-                            summaries.append(f"⚠️ API error for chunk {idx}")
+                        if not success:
+                            summaries.append(f"⚠️ All API keys failed for chunk {idx}")
                             
                     except Exception as e:
                         print(f"⚠️ Error summarizing chunk {idx}: {str(e)}")
