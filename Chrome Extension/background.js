@@ -506,6 +506,7 @@ async function analyzeSingleFrameForCaption(base64Image, frameIndex) {
     }
     
     const data = await response.json();
+    console.log(`✅ Backend response for frame ${frameIndex + 1}:`, data);
     console.log(`✅ Caption ${frameIndex + 1} generated: "${data.description?.substring(0, 50)}..."`);
     
     return { success: true, caption: data.description };

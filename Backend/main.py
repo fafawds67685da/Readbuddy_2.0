@@ -1,4 +1,4 @@
-# main.py (FastAPI Backend - MULTI-FRAME VIDEO ANALYSIS + T5 SUMMARIZATION)
+# main.py (FastAPI Backend - MULTI-FRAME VIDEO ANALYSIS + PEGASUS SUMMARIZATION)
 
 import os
 import io
@@ -16,18 +16,22 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from transformers import (
     pipeline, 
-    BlipProcessor, 
-    BlipForConditionalGeneration,
     Blip2Processor,
-    Blip2ForConditionalGeneration,
-    T5ForConditionalGeneration,
-    T5Tokenizer
+    BlipImageProcessor,
+    AutoTokenizer,
+    InstructBlipForConditionalGeneration,
+    PegasusForConditionalGeneration,
+    PegasusTokenizer
 )
 from urllib.parse import urlparse, parse_qs
 from requests.adapters import HTTPAdapter, Retry
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Google Gemini API Configuration
+GEMINI_API_KEY = "AIzaSyB8REm_mE21KUvaqyBvW3TAud8sUr4vEFM"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
 
 # --- Pydantic Models ---
 class PageInput(BaseModel):
@@ -64,18 +68,20 @@ app.add_middleware(
 )
 
 # --- Global Models ---
-summarizer = None
+# summarizer = None  # REMOVED - Using Gemini API instead to save memory
 processor = None
-blip_model = None
-t5_model = None
-t5_tokenizer = None
+image_processor_standalone = None  # For separate image processing if needed
+tokenizer_standalone = None  # For separate text tokenization if needed
+instructblip_model = None
+pegasus_model = None
+pegasus_tokenizer = None
 device = None
 image_transform = None
 
 # --- Model Loading ---
 @app.on_event("startup")
 def load_models():
-    global summarizer, processor, blip_model, t5_model, t5_tokenizer, device, image_transform
+    global processor, image_processor_standalone, tokenizer_standalone, instructblip_model, pegasus_model, pegasus_tokenizer, device, image_transform
     print("⏳ Loading AI models (this may take a few minutes)...")
     
     # Properly set device
@@ -83,62 +89,62 @@ def load_models():
     print(f"🔧 Using device: {device}")
     
     try:
-        # 1. Summarization Model (BART) for long text
-        device_id = 0 if torch.cuda.is_available() else -1
-        summarizer = pipeline(
-            "summarization", 
-            model="facebook/bart-large-cnn", 
-            device=device_id
-        )
-        print("✅ BART summarization model loaded")
+        # REMOVED: BART summarization model (too large, using Gemini API instead)
+        # We'll use Gemini API for text summarization to save memory
+        summarizer = None
+        print("✅ Text summarization: Using Gemini API (no local model needed)")
 
-        # 2. Image Captioning Model (BLIP-2 FlanT5-XXL - BETTER QUALITY + MORE STABLE)
-        print("⏳ Loading BLIP-2 model (better quality captioning)...")
+        # Image Captioning: Primary = InstructBLIP, Fallback = Gemini API
+        print("⏳ Loading InstructBLIP model (primary for image captioning)...")
+        print("   Note: Gemini API will be used as fallback if this fails")
+        
+        # Import the components we need to manually construct the processor
+        from transformers import BlipImageProcessor, AutoTokenizer
+        
         try:
-            # Try BLIP-2 FlanT5 first (more stable, better quality)
-            processor = Blip2Processor.from_pretrained(
-                "Salesforce/blip2-flan-t5-xl",
-                local_files_only=False,
-                trust_remote_code=True
-            )
-            blip_model = Blip2ForConditionalGeneration.from_pretrained(
-                "Salesforce/blip2-flan-t5-xl",
+            # Load InstructBLIP-FlanT5-XL as primary image captioning model
+            print("   Loading InstructBLIP-FlanT5-XL (primary captioning model)...")
+            
+            # Load image processor and tokenizer separately to avoid config conflicts
+            image_processor_standalone = BlipImageProcessor.from_pretrained("Salesforce/instructblip-flan-t5-xl")
+            tokenizer_standalone = AutoTokenizer.from_pretrained("Salesforce/instructblip-flan-t5-xl", use_fast=False)
+            
+            # Manually construct the processor (Blip2Processor expects image_processor and tokenizer)
+            processor = Blip2Processor(image_processor=image_processor_standalone, tokenizer=tokenizer_standalone)
+            
+            instructblip_model = InstructBlipForConditionalGeneration.from_pretrained(
+                "Salesforce/instructblip-flan-t5-xl",
                 torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                local_files_only=False,
-                trust_remote_code=True
-            ).to(device)
-            print("✅ BLIP-2 FlanT5-XL loaded (best quality!)")
+                device_map="auto" if torch.cuda.is_available() else None,
+                low_cpu_mem_usage=True
+            )
+            if not torch.cuda.is_available():
+                instructblip_model = instructblip_model.to(device)
+            
+            # SPEED OPTIMIZATION: Enable inference mode and CPU optimizations
+            instructblip_model.eval()
+            
+            if device.type == 'cpu':
+                print("   🚀 Applying CPU optimizations...")
+                try:
+                    torch.set_num_threads(4)  # Limit threads to reduce overhead
+                    torch.set_flush_denormal(True)  # Faster float operations
+                except Exception as opt_err:
+                    print(f"   ⚠️ Some CPU optimizations unavailable: {opt_err}")
+            
+            print("✅ InstructBLIP-FlanT5-XL loaded successfully (PRIMARY for images)!")
             
         except Exception as e:
-            print(f"⚠️ BLIP-2 FlanT5-XL failed: {e}")
-            print("🔄 Falling back to BLIP-2 FlanT5-base (smaller, faster)...")
-            
-            try:
-                processor = Blip2Processor.from_pretrained(
-                    "Salesforce/blip2-flan-t5-base",
-                    local_files_only=False
-                )
-                blip_model = Blip2ForConditionalGeneration.from_pretrained(
-                    "Salesforce/blip2-flan-t5-base",
-                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                    local_files_only=False
-                ).to(device)
-                print("✅ BLIP-2 FlanT5-base loaded (good quality)")
-                
-            except Exception as e2:
-                print(f"⚠️ BLIP-2 FlanT5-base also failed: {e2}")
-                print("🔄 Falling back to original BLIP-base (most stable)...")
-                
-                # Ultimate fallback: original BLIP
-                processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-                blip_model = BlipForConditionalGeneration.from_pretrained(
-                    "Salesforce/blip-image-captioning-base"
-                ).to(device)
-                print("✅ BLIP-base loaded (fallback, basic quality)")
+            print(f"⚠️ InstructBLIP loading failed: {e}")
+            print("⚠️ Continuing without InstructBLIP (Gemini API will be used as primary)")
+            processor = None
+            image_processor_standalone = None
+            tokenizer_standalone = None
+            instructblip_model = None
         
-        # 3. Manual image preprocessing transform (FALLBACK for BLIP-2)
+        # 3. Manual image preprocessing transform
         image_transform = transforms.Compose([
-            transforms.Resize((224, 224)),  # BLIP-2 uses 224x224
+            transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=[0.48145466, 0.4578275, 0.40821073],
@@ -146,22 +152,21 @@ def load_models():
             )
         ])
         
-        print("✅ Image captioning model loaded successfully")
+        print("✅ Image captioning setup complete (InstructBLIP primary, Gemini fallback)")
 
-        # 4. T5 Model for Video Sequence Summarization
-        print("⏳ Loading T5 model for video summarization...")
-        t5_tokenizer = T5Tokenizer.from_pretrained("t5-base")
-        t5_model = T5ForConditionalGeneration.from_pretrained("t5-base").to(device)
-        print("✅ T5 summarization model loaded")
+        # 4. Pegasus Model for Video Sequence Summarization
+        print("⏳ Loading Pegasus model for video summarization...")
+        pegasus_tokenizer = PegasusTokenizer.from_pretrained("google/pegasus-xsum")
+        pegasus_model = PegasusForConditionalGeneration.from_pretrained("google/pegasus-xsum").to(device)
+        print("✅ Pegasus summarization model loaded")
         
-        # Verify models loaded
-        if processor is None or blip_model is None:
-            raise RuntimeError("BLIP model or processor failed to load")
-        
-        if t5_model is None or t5_tokenizer is None:
-            raise RuntimeError("T5 model or tokenizer failed to load")
+        # Verify critical models loaded
+        if pegasus_model is None or pegasus_tokenizer is None:
+            raise RuntimeError("Pegasus model or tokenizer failed to load")
         
         print(f"✅ All models loaded successfully on {device}!")
+        print(f"📊 Memory usage: InstructBLIP (~5GB primary), Pegasus (~2GB), Gemini API (cloud fallback)")
+        print(f"💡 Image captioning priority: InstructBLIP → Gemini API")
 
     except Exception as e:
         print(f"⚠️ Error loading one or more models: {e}")
@@ -182,15 +187,116 @@ def extract_youtube_id(url):
         pass
     return None
 
+def generate_gemini_caption(img):
+    """
+    Generate detailed image caption using Google Gemini API
+    
+    Args:
+        img: PIL Image object
+        
+    Returns:
+        str: Detailed caption or None if failed
+    """
+    try:
+        # Ensure it's a PIL Image
+        if not isinstance(img, Image.Image):
+            if isinstance(img, np.ndarray):
+                if img.dtype in [np.float32, np.float64]:
+                    if img.max() <= 1.0:
+                        img = (img * 255).astype(np.uint8)
+                    else:
+                        img = img.astype(np.uint8)
+                img = Image.fromarray(img)
+            else:
+                raise ValueError(f"Expected PIL Image, got {type(img)}")
+        
+        # Ensure RGB mode
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Convert image to base64
+        buffered = io.BytesIO()
+        img.save(buffered, format="JPEG", quality=85)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        # Prepare Gemini API request
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "contents": [{
+                "parts": [
+                    {
+                        "text": "Describe this image in detail for a visually impaired person. Include colors, objects, people, actions, settings, and any text visible. Be descriptive and thorough (4-6 sentences)."
+                    },
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": img_base64
+                        }
+                    }
+                ]
+            }],
+            "generationConfig": {
+                "temperature": 0.4,
+                "topK": 32,
+                "topP": 1,
+                "maxOutputTokens": 300  # Increased from 200 for longer descriptions
+            }
+        }
+        
+        # Make API request
+        response = requests.post(
+            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+            headers=headers,
+            json=payload,
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Extract caption from response
+            if 'candidates' in result and len(result['candidates']) > 0:
+                candidate = result['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    parts = candidate['content']['parts']
+                    if len(parts) > 0 and 'text' in parts[0]:
+                        caption = parts[0]['text'].strip()
+                        
+                        # Clean up the caption
+                        if caption:
+                            # Capitalize first letter
+                            caption = caption[0].upper() + caption[1:] if len(caption) > 1 else caption.upper()
+                            # Add period if needed
+                            if not caption.endswith(('.', '!', '?')):
+                                caption += '.'
+                            
+                            print(f"   ✅ Gemini caption generated: {caption[:60]}...")
+                            return caption
+            
+            print(f"   ⚠️ Unexpected Gemini response format: {result}")
+            return None
+        else:
+            print(f"   ❌ Gemini API error: {response.status_code} - {response.text}")
+            return None
+            
+    except Exception as e:
+        print(f"   ❌ Gemini caption error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def generate_detailed_caption(img, fast: bool = False):
     """
-        Generate DETAILED, LONG captions for video frames using BLIP model
-        Focuses on visual details like colors, actions, movements for blind users
+    Generate DETAILED, LONG captions for video frames using InstructBLIP model
+    Uses instruction prompts to guide the model for accessibility-focused descriptions
     """
     try:
         # Verify models are loaded
-        if processor is None or blip_model is None:
-            print("   ⚠️ BLIP model not loaded")
+        if processor is None or instructblip_model is None:
+            print("   ⚠️ InstructBLIP model not loaded")
             return None
 
         # Ensure it's a PIL Image
@@ -209,72 +315,95 @@ def generate_detailed_caption(img, fast: bool = False):
         if img.mode != 'RGB':
             img = img.convert('RGB')
 
-        # METHOD 1: Try using processor with list wrapping (batch mode)
+        # InstructBLIP requires a text prompt (instruction)
+        # Optimized prompt for accessibility - detailed visual descriptions
+        prompt = "Provide a comprehensive and detailed description of this image for a visually impaired person. Include all colors, objects, people, their positions, actions, facial expressions, clothing, settings, background details, spatial relationships, and any text visible. Be thorough and complete."
+        
+        # Process image and prompt together
         try:
+            # Try using the combined processor first
             inputs = processor(
-                images=[img],  # Wrap in list for batch processing
+                images=img,
+                text=prompt,
                 return_tensors="pt",
-                padding=True
+                padding="max_length",
+                max_length=512,
+                truncation=True
             )
             
-            # Move tensors to device
-            inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
-                      for k, v in inputs.items()}
+            # Check if we got the required inputs
+            if 'pixel_values' not in inputs or 'input_ids' not in inputs:
+                print(f"   ⚠️ Processor didn't return expected keys: {list(inputs.keys())}")
+                
+                # Fallback: process image and text separately
+                print(f"   🔄 Trying separate processing...")
+                pixel_values = image_processor_standalone(images=img, return_tensors="pt").pixel_values
+                text_inputs = tokenizer_standalone(
+                    prompt,
+                    return_tensors="pt",
+                    padding="max_length",
+                    max_length=512,
+                    truncation=True
+                )
+                
+                # Combine manually
+                inputs = {
+                    'pixel_values': pixel_values,
+                    'input_ids': text_inputs.input_ids,
+                    'attention_mask': text_inputs.attention_mask
+                }
             
-            print("   ✅ Method 1 (processor): Success")
+            # Move all tensors to device
+            inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+            
+            # InstructBLIP expects 'qformer_input_ids' not 'input_ids'
+            # Rename the key if needed
+            if 'input_ids' in inputs and 'qformer_input_ids' not in inputs:
+                print(f"   🔄 Renaming 'input_ids' to 'qformer_input_ids' for InstructBLIP")
+                inputs['qformer_input_ids'] = inputs.pop('input_ids')
+            
+            if 'attention_mask' in inputs and 'qformer_attention_mask' not in inputs:
+                print(f"   🔄 Renaming 'attention_mask' to 'qformer_attention_mask' for InstructBLIP")
+                inputs['qformer_attention_mask'] = inputs.pop('attention_mask')
+            
+            print("   ✅ InstructBLIP processing: Success")
+            print(f"   📊 Input keys: {list(inputs.keys())}")
+            for key in inputs.keys():
+                if isinstance(inputs[key], torch.Tensor):
+                    print(f"   📊 {key} shape: {inputs[key].shape}")
             
         except Exception as e:
-            print(f"   ⚠️ Method 1 failed: {e}")
-            print("   🔄 Trying Method 2 (manual transform)...")
-            
-            # METHOD 2: Manual preprocessing (FALLBACK)
-            try:
-                pixel_values = image_transform(img).unsqueeze(0).to(device)
-                inputs = {"pixel_values": pixel_values}
-                print("   ✅ Method 2 (manual): Success")
-                
-            except Exception as e2:
-                print(f"   ⚠️ Method 2 also failed: {e2}")
-                print("   🔄 Trying Method 3 (raw tensor conversion)...")
-                
-                # METHOD 3: Direct numpy to tensor (LAST RESORT)
-                try:
-                    img_resized = img.resize((224, 224), Image.Resampling.LANCZOS)  # BLIP-2 uses 224x224
-                    img_array = np.array(img_resized).astype(np.float32) / 255.0
-                    mean = np.array([0.48145466, 0.4578275, 0.40821073])
-                    std = np.array([0.26862954, 0.26130258, 0.27577711])
-                    img_array = (img_array - mean) / std
-                    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).unsqueeze(0).float().to(device)
-                    inputs = {"pixel_values": img_tensor}
-                    print("   ✅ Method 3 (raw): Success")
-                    
-                except Exception as e3:
-                    print(f"   ❌ All methods failed: {e3}")
-                    return None
+            print(f"   ❌ InstructBLIP processing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
-        # IMPROVED: Better captions with more detail for better summaries
+        # Generate caption with InstructBLIP
         use_fast = fast or (device is not None and device.type != 'cuda')
 
         gen_kwargs = {
-            'max_length': 80,         # INCREASED: More detailed captions (was 200)
-            'min_length': 25,         # INCREASED: Ensure substantial descriptions (was 50)
-            'num_beams': 5,           # BALANCED: Good quality (was 8)
-            'length_penalty': 1.2,    # ADJUSTED: Slightly prefer longer captions (was 1.0)
-            'repetition_penalty': 2.5, # INCREASED: Prevent repetitive phrases (was 2.0)
+            'max_length': 150,        # Reduced from 512 for faster video frame captioning
+            'min_length': 40,         # Reduced from 100 - Still detailed but faster
+            'num_beams': 3,           # Reduced from 5 for speed
+            'length_penalty': 1.5,    # Reduced from 2.0
+            'repetition_penalty': 2.5, # Prevent repetitive phrases
             'early_stopping': True,
             'do_sample': False,
         }
 
         if use_fast:
+            # ULTRA-FAST mode for video frames on CPU (greedy decoding)
             gen_kwargs.update({
-                'max_length': 75,     # INCREASED: Better quality even in fast mode (was 60)
-                'min_length': 20,     # INCREASED: Ensure meaningful captions (was 10)
-                'num_beams': 3,       # INCREASED: Balance speed and quality (was 1)
+                'max_length': 60,     # Very short captions (was 100)
+                'min_length': 20,     # Minimal requirement (was 30)
+                'num_beams': 1,       # GREEDY DECODING - 2-3x faster! (was 2)
+                'do_sample': False,   # Deterministic output
+                # Remove early_stopping and length_penalty - not used with num_beams=1
             })
 
-        # Generate caption
+        # Generate caption with InstructBLIP
         with torch.no_grad():
-            generated_ids = blip_model.generate(
+            generated_ids = instructblip_model.generate(
                 **inputs,
                 **gen_kwargs
             )
@@ -299,13 +428,40 @@ def generate_detailed_caption(img, fast: bool = False):
 
 def generate_caption_safe(img):
     """
-    Generate caption for an image using BLIP model (original function, kept for compatibility)
+    Generate caption for an image using InstructBLIP (primary) with Gemini API as fallback
+    
+    Args:
+        img: PIL Image object or numpy array
+        
+    Returns:
+        str: Image caption or error message
     """
-    return generate_detailed_caption(img)
+    try:
+        # Try InstructBLIP first (local model, faster, more consistent)
+        print("   🤖 Trying InstructBLIP model for image captioning...")
+        caption = generate_detailed_caption(img)
+        
+        if caption:
+            print("   ✅ InstructBLIP caption successful")
+            return caption
+        
+        # Fallback to Gemini API if InstructBLIP fails
+        print("   ⚠️ InstructBLIP failed, falling back to Gemini API...")
+        caption = generate_gemini_caption(img)
+        
+        if caption:
+            print("   ✅ Gemini API caption successful")
+            return caption
+        
+        return "Unable to generate caption for this image."
+        
+    except Exception as e:
+        print(f"   ❌ Caption generation error: {str(e)}")
+        return f"Error: {str(e)}"
 
 def summarize_video_sequence(captions_list):
     """
-    Summarizes multiple video frame captions into a coherent narrative using T5
+    Summarizes multiple video frame captions into a coherent narrative using Pegasus
     
     Args:
         captions_list: List of 6 caption strings
@@ -323,51 +479,40 @@ def summarize_video_sequence(captions_list):
         if len(valid_captions) == 0:
             return "Unable to generate summary from the provided frames."
         
-        # IMPROVED: Simple, direct prompt that won't be repeated in output
         # Concatenate captions into a narrative
         caption_text = ". ".join([c for c in valid_captions])
-        input_text = f"summarize: In this 30-second video sequence: {caption_text}"
+        input_text = f"summarize: {caption_text}"
         
-        # Tokenize
-        inputs = t5_tokenizer(
+        # Tokenize with Pegasus-XSUM's maximum supported length (512 tokens)
+        # The model's position embeddings only support up to 512 positions
+        inputs = pegasus_tokenizer(
             input_text,
             return_tensors="pt",
-            max_length=512,
+            max_length=512,  # Changed from 1024 - Pegasus position embeddings limit
             truncation=True,
             padding=True
         ).to(device)
         
-        # IMPROVED: Generate coherent, natural summary
+        # Generate summary with Pegasus
         with torch.no_grad():
-            summary_ids = t5_model.generate(
+            summary_ids = pegasus_model.generate(
                 inputs.input_ids,
-                max_length=200,        # Moderate length for TTS
-                min_length=60,         # Ensure substantial output
-                num_beams=4,           # Balance quality and speed
-                length_penalty=2.0,    # Encourage complete sentences
-                repetition_penalty=2.5, # Avoid repetition
+                max_length=150,         # Moderate length for TTS
+                min_length=40,          # Ensure substantial output
+                num_beams=4,            # Balance quality and speed
+                length_penalty=2.0,     # Encourage complete sentences
                 early_stopping=True,
-                no_repeat_ngram_size=3, # Prevent 3-gram repetition
-                do_sample=False        # Deterministic for consistency
+                no_repeat_ngram_size=3  # Prevent 3-gram repetition
             )
         
-        summary = t5_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+        summary = pegasus_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
         summary = summary.strip()
         
-        # CRITICAL: Remove any prompt leakage from T5 output
-        # T5 sometimes repeats the input - strip known prompt patterns
-        prompt_patterns = [
-            "summarize:",
-            "Describe what is visually happening",
-            "Create a vivid narrative",
-            "Make it flow like a story",
-            "Here are the frame descriptions:",
-            "In this 30-second video sequence:"
-        ]
-        
-        for pattern in prompt_patterns:
-            if summary.lower().startswith(pattern.lower()):
-                summary = summary[len(pattern):].strip()
+        # Clean up any prompt leakage (Pegasus uses "summarize:" prefix)
+        if summary.lower().startswith("summarize:"):
+            summary = summary[10:].strip()
+        elif summary.lower().startswith("video sequence:"):
+            summary = summary[15:].strip()
         
         # Capitalize and add period
         if summary:
@@ -446,37 +591,26 @@ async def root():
         "version": app.version,
         "device": str(device),
         "models": {
-            "summarizer": "BART-Large-CNN",
-            "image_captioning": "BLIP-Base (Enhanced)",
-            "video_summarization": "T5-Base",
+            "text_summarization": "Google Gemini API (Cloud)",
+            "image_captioning": "InstructBLIP (Primary) + Google Gemini 2.0 Flash (Fallback)",
+            "video_frame_captioning": "InstructBLIP Ultra-Fast Mode (Primary) + Gemini API (Fallback)",
+            "video_summarization": "Pegasus-XSUM",
             "device": str(device),
             "models_loaded": {
-                "summarizer": summarizer is not None,
-                "blip_processor": processor is not None,
-                "blip_model": blip_model is not None,
-                "t5_model": t5_model is not None,
-                "t5_tokenizer": t5_tokenizer is not None
-            }
+                "instructblip_processor": processor is not None,
+                "instructblip_model": instructblip_model is not None,
+                "pegasus_model": pegasus_model is not None,
+                "pegasus_tokenizer": pegasus_tokenizer is not None
+            },
+            "memory_saved": "BART model removed - using Gemini API for text summarization"
         }
     }
 
 @app.post("/analyze-video-frame")
 async def analyze_video_frame(data: VideoFrameInput):
-    """Analyzes a single video frame (Base64 image) and returns a description."""
+    """Analyzes a single video frame (Base64 image) and returns a description.
+    For video frames, we use InstructBLIP as primary (optimized for speed) with Gemini API as fallback."""
     print("📹 Received video frame analysis request")
-    
-    # Check if models are loaded
-    if not blip_model or not processor:
-        print("❌ BLIP model not loaded")
-        return JSONResponse(
-            status_code=503,
-            content={"error": "BLIP Image Captioning model not loaded."},
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "*",
-                "Access-Control-Allow-Headers": "*",
-            }
-        )
 
     try:
         # Validate input
@@ -511,16 +645,34 @@ async def analyze_video_frame(data: VideoFrameInput):
             print(f"❌ PIL Image open error: {e}")
             raise ValueError(f"Invalid image data: {str(e)}")
 
-        # Generate DETAILED caption (fast mode on CPU if requested)
+        # FOR VIDEO FRAMES: Use InstructBLIP first (fast mode with greedy decoding)
+        # Then fall back to Gemini API if InstructBLIP fails
         try:
-            fast_mode = bool(data.fast) if data.fast is not None else (device is not None and device.type != 'cuda')
-            description = generate_detailed_caption(image, fast=fast_mode)
-            
-            if not description:
-                description = "Unable to generate description for this frame."
-                print(f"⚠️ No description generated, using fallback")
+            if instructblip_model and processor:
+                print("   🤖 Trying InstructBLIP for video frame (ultra-fast mode)...")
+                fast_mode = bool(data.fast) if data.fast is not None else (device is not None and device.type != 'cuda')
+                description = generate_detailed_caption(image, fast=fast_mode)
+                
+                if description:
+                    print(f"   ✅ InstructBLIP caption successful: {description[:80]}...")
+                else:
+                    # Fallback to Gemini if InstructBLIP fails
+                    print("   ⚠️ InstructBLIP failed, falling back to Gemini API...")
+                    description = generate_gemini_caption(image)
+                    
+                    if description and description != "Unable to analyze this image":
+                        print(f"   ✅ Gemini caption successful: {description[:80]}...")
+                    else:
+                        description = "Unable to generate description for this frame."
             else:
-                print(f"✅ Generated description: {description}")
+                # No InstructBLIP available, use Gemini
+                print("   🌟 InstructBLIP not available, using Gemini API...")
+                description = generate_gemini_caption(image)
+                
+                if not description or description == "Unable to analyze this image":
+                    description = "Unable to generate description for this frame."
+                else:
+                    print(f"   ✅ Gemini caption successful: {description[:80]}...")
             
             return JSONResponse(
                 content={"description": description, "status": "success"},
@@ -572,11 +724,11 @@ async def analyze_video_sequence(data: VideoSequenceInput):
     print(f"🎬 Received video sequence analysis request ({len(data.frames)} frames)")
     
     # Check if models are loaded
-    if not blip_model or not processor:
-        print("❌ BLIP model not loaded")
+    if not instructblip_model or not processor:
+        print("❌ InstructBLIP model not loaded")
         return JSONResponse(
             status_code=503,
-            content={"error": "BLIP Image Captioning model not loaded."},
+            content={"error": "InstructBLIP Image Captioning model not loaded."},
             headers={
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "*",
@@ -584,11 +736,11 @@ async def analyze_video_sequence(data: VideoSequenceInput):
             }
         )
     
-    if not t5_model or not t5_tokenizer:
-        print("❌ T5 model not loaded")
+    if not pegasus_model or not pegasus_tokenizer:
+        print("❌ Pegasus model not loaded")
         return JSONResponse(
             status_code=503,
-            content={"error": "T5 Summarization model not loaded."},
+            content={"error": "Pegasus Summarization model not loaded."},
             headers={
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "*",
@@ -617,8 +769,8 @@ async def analyze_video_sequence(data: VideoSequenceInput):
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
                 
-                # Generate detailed caption
-                caption = generate_detailed_caption(image)
+                # Generate detailed caption with FAST mode for video frames
+                caption = generate_detailed_caption(image, fast=True)
                 
                 if caption:
                     captions.append(caption)
@@ -675,12 +827,12 @@ async def summarize_captions(data: CaptionSummarizationInput):
     """
     print(f"📝 Received caption summarization request ({len(data.captions)} captions)")
     
-    # Check if T5 model is loaded
-    if not t5_model or not t5_tokenizer:
-        print("❌ T5 model not loaded")
+    # Check if Pegasus model is loaded
+    if not pegasus_model or not pegasus_tokenizer:
+        print("❌ Pegasus model not loaded")
         return JSONResponse(
             status_code=503,
-            content={"error": "T5 Summarization model not loaded."},
+            content={"error": "Pegasus Summarization model not loaded."},
             headers={
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "*",
@@ -795,15 +947,45 @@ async def analyze_page(request: Request):
         async def generate_stream():
             import json
             
-            # --- TEXT SUMMARIZATION ---
+            # --- TEXT SUMMARIZATION (Using Gemini API) ---
             summaries = []
             if text and text.strip():
-                chunks = [text[i:i + 2000] for i in range(0, len(text), 2000)]
+                chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]  # Larger chunks for Gemini
                 for idx, chunk in enumerate(chunks, 1):
                     try:
-                        summary = summarizer(chunk, max_length=130, min_length=30, do_sample=False)
-                        summaries.append(summary[0]["summary_text"])
+                        # Use Gemini API for text summarization
+                        headers = {"Content-Type": "application/json"}
+                        payload = {
+                            "contents": [{
+                                "parts": [{
+                                    "text": f"Summarize the following text in 2-3 concise sentences for a visually impaired person:\n\n{chunk}"
+                                }]
+                            }],
+                            "generationConfig": {
+                                "temperature": 0.3,
+                                "maxOutputTokens": 150
+                            }
+                        }
+                        
+                        response = requests.post(
+                            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+                            headers=headers,
+                            json=payload,
+                            timeout=10
+                        )
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            if 'candidates' in result and len(result['candidates']) > 0:
+                                summary_text = result['candidates'][0]['content']['parts'][0]['text']
+                                summaries.append(summary_text.strip())
+                            else:
+                                summaries.append(f"⚠️ Could not summarize chunk {idx}")
+                        else:
+                            summaries.append(f"⚠️ API error for chunk {idx}")
+                            
                     except Exception as e:
+                        print(f"⚠️ Error summarizing chunk {idx}: {str(e)}")
                         summaries.append(f"⚠️ Error summarizing chunk {idx}: {str(e)}")
             else:
                 summaries = ["No readable text found on this page."]

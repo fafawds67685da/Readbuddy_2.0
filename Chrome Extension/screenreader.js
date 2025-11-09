@@ -168,6 +168,10 @@ class ScreenReader {
     this.pageLinks = [];
     this.currentHighlight = null;
     
+    // Privacy screen state
+    this.privacyScreenActive = false;
+    this.privacyOverlay = null;
+    
     // Initialize on first user interaction
     this.initialized = false;
     
@@ -208,6 +212,8 @@ class ScreenReader {
     const welcomeMessage = `Welcome to ReadBuddy Screen Reader. 
       You are on ${this.getPageTitle()}. 
       Press Alt 1 to summarize the text on this page.
+      Press Alt 5 to read all content on this page.
+      Press Alt 6 to activate privacy screen.
       Press Down Arrow to navigate to links on this page.
       Press Alt H for help to hear all available keyboard shortcuts.`;
     
@@ -245,6 +251,11 @@ class ScreenReader {
     if (this.currentHighlight) {
       this.currentHighlight.remove();
       this.currentHighlight = null;
+    }
+
+    // Deactivate privacy screen if active
+    if (this.privacyScreenActive) {
+      this.deactivatePrivacyScreen();
     }
     
     // Reset link navigation state
@@ -342,7 +353,9 @@ class ScreenReader {
       Press Alt 1 to summarize the page.
       Press Alt 2 to describe all images on the page.
       Press Alt 3 to analyze and summarize video content.
-      Press Alt 4 to stop all speech.`;
+      Press Alt 4 to stop all speech.
+      Press Alt 5 to read all visible content on the page.
+      Press Alt 6 to toggle privacy screen and hide your display from others.`;
     
     this.speak(helpMessage, { rate: 0.9 });
   }
@@ -529,6 +542,93 @@ class ScreenReader {
       link.element.click();
     }, 800);
   }
+
+  // Read all visible content on the page
+  readAllContent() {
+    console.log('📖 Reading all visible content on the page');
+    
+    // Get all text content from the page
+    const content = this.extractAllVisibleText();
+    
+    if (!content || content.trim().length === 0) {
+      this.speak('No readable content found on this page.');
+      return;
+    }
+    
+    // Announce what we're doing
+    const wordCount = content.split(/\s+/).length;
+    this.speak(`Reading all page content. Approximately ${wordCount} words. Press Escape to stop.`);
+    
+    // Wait a moment, then start reading
+    setTimeout(() => {
+      this.speak(content, { rate: this.speechRate });
+    }, 2000);
+  }
+
+  // Extract all visible text from the page
+  extractAllVisibleText() {
+    const elementsToRead = [];
+    
+    // Get main content area if it exists
+    const mainContent = document.querySelector('main') || 
+                        document.querySelector('[role="main"]') ||
+                        document.querySelector('article') ||
+                        document.body;
+    
+    // Helper function to check if element is visible
+    const isVisible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none' && 
+             style.visibility !== 'hidden' && 
+             style.opacity !== '0' &&
+             element.offsetWidth > 0 &&
+             element.offsetHeight > 0;
+    };
+    
+    // Helper function to check if element should be skipped
+    const shouldSkip = (element) => {
+      const tagName = element.tagName.toLowerCase();
+      const skipTags = ['script', 'style', 'noscript', 'iframe', 'svg', 'path'];
+      return skipTags.includes(tagName) || 
+             element.hasAttribute('aria-hidden') ||
+             element.classList.contains('readbuddy-link-highlight');
+    };
+    
+    // Extract text from headings, paragraphs, lists, etc.
+    const contentSelectors = [
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',  // Headings
+      'p',                                   // Paragraphs
+      'li',                                  // List items
+      'td', 'th',                           // Table cells
+      'blockquote',                         // Quotes
+      'figcaption',                         // Figure captions
+      'label',                              // Form labels
+      '[role="heading"]',                   // ARIA headings
+      '[role="article"]'                    // ARIA articles
+    ];
+    
+    contentSelectors.forEach(selector => {
+      const elements = mainContent.querySelectorAll(selector);
+      elements.forEach(el => {
+        if (isVisible(el) && !shouldSkip(el)) {
+          const text = el.textContent.trim();
+          // Only add if it has substantial text (more than 3 characters)
+          if (text.length > 3) {
+            // Add heading level or paragraph markers
+            let prefix = '';
+            if (el.tagName.match(/^H[1-6]$/)) {
+              prefix = `Heading level ${el.tagName[1]}. `;
+            }
+            elementsToRead.push(prefix + text);
+          }
+        }
+      });
+    });
+    
+    // Join all text with pauses (periods create natural pauses in TTS)
+    return elementsToRead.join('. ');
+  }
   
   // Announce browser action
   announceBrowserAction(action) {
@@ -551,6 +651,132 @@ class ScreenReader {
     
     const message = messages[action] || `Action: ${action}`;
     this.speak(message, { rate: 1.2 }); // Faster for quick feedback
+  }
+
+  // Toggle Privacy Screen (Alt+6)
+  togglePrivacyScreen() {
+    if (!this.isActive) {
+      this.speak('Please activate the screen reader first by pressing Alt A.');
+      return;
+    }
+
+    if (this.privacyScreenActive) {
+      this.deactivatePrivacyScreen();
+    } else {
+      this.activatePrivacyScreen();
+    }
+  }
+
+  // Activate privacy screen overlay
+  activatePrivacyScreen() {
+    console.log('🔒 Activating privacy screen');
+    
+    // Remove existing overlay if any
+    if (this.privacyOverlay) {
+      this.privacyOverlay.remove();
+    }
+
+    // Create full-screen black overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'readbuddy-privacy-screen';
+    overlay.style.cssText = `
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      background: #000000 !important;
+      z-index: 2147483647 !important;
+      pointer-events: none !important;
+      opacity: 1 !important;
+      transition: opacity 0.3s ease !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+    `;
+
+    // Add fake lock screen appearance (optional - looks more convincing)
+    overlay.innerHTML = `
+      <div style="
+        text-align: center;
+        color: #ffffff;
+        pointer-events: none;
+        user-select: none;
+      ">
+        <div style="
+          font-size: 72px;
+          margin-bottom: 20px;
+          opacity: 0.8;
+        ">🔒</div>
+        <div style="
+          font-size: 28px;
+          font-weight: 300;
+          margin-bottom: 10px;
+          opacity: 0.9;
+        ">Screen Locked</div>
+        <div style="
+          font-size: 14px;
+          opacity: 0.6;
+          margin-top: 30px;
+          position: absolute;
+          bottom: 40px;
+          left: 50%;
+          transform: translateX(-50%);
+          white-space: nowrap;
+        ">Press Alt+6 to unlock (Screen reader users only)</div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    this.privacyOverlay = overlay;
+    this.privacyScreenActive = true;
+
+    // Announce to user
+    this.speak('Privacy screen activated. Your screen is now hidden from others. You can continue using all screen reader features normally. Press Alt 6 again to deactivate.', { rate: 1.1 });
+
+    // Optional: Remind user every 5 minutes
+    this.privacyReminder = setInterval(() => {
+      if (this.privacyScreenActive) {
+        console.log('🔔 Privacy screen reminder');
+        // Don't announce during speech to avoid interruption
+        if (!this.isSpeaking) {
+          this.speak('Reminder: Privacy screen is active.', { rate: 1.3, volume: 0.7 });
+        }
+      }
+    }, 300000); // 5 minutes
+
+    console.log('✅ Privacy screen activated');
+  }
+
+  // Deactivate privacy screen overlay
+  deactivatePrivacyScreen() {
+    console.log('🔓 Deactivating privacy screen');
+
+    if (this.privacyOverlay) {
+      // Fade out animation
+      this.privacyOverlay.style.opacity = '0';
+      
+      setTimeout(() => {
+        if (this.privacyOverlay) {
+          this.privacyOverlay.remove();
+          this.privacyOverlay = null;
+        }
+      }, 300);
+    }
+
+    this.privacyScreenActive = false;
+
+    // Clear reminder interval
+    if (this.privacyReminder) {
+      clearInterval(this.privacyReminder);
+      this.privacyReminder = null;
+    }
+
+    // Announce to user
+    this.speak('Privacy screen deactivated. Your screen is now visible.', { rate: 1.1 });
+
+    console.log('✅ Privacy screen deactivated');
   }
   
   // Find all navigable elements on page
@@ -867,6 +1093,25 @@ class ScreenReader {
         event.stopPropagation();
         event.stopImmediatePropagation();
         this.showHelp();
+        return;
+      }
+      
+      // Alt+5 for reading all page content
+      if (window.detectAltKey && window.detectAltKey(event, '5', ['₅', '⁵'])) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        this.readAllContent();
+        return;
+      }
+
+      // Alt+6 for privacy screen toggle (simpler detection for number keys)
+      if (event.altKey && !event.ctrlKey && !event.shiftKey && (event.key === '6' || event.code === 'Digit6')) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        console.log('🔒 Alt+6 detected - Toggling privacy screen');
+        this.togglePrivacyScreen();
         return;
       }
       

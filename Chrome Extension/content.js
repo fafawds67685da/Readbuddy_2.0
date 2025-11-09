@@ -7,6 +7,10 @@ if (window.__READBUDDY_LOADED__) {
 } else {
   window.__READBUDDY_LOADED__ = true;
 
+// --- Speech Queue for Image Captions ---
+let speechQueue = [];
+let isSpeaking = false;
+
 // --- Video Analysis State ---
 let analysisInterval = null;
 let currentVideoElement = null;
@@ -492,34 +496,42 @@ async function captureAndSendFrameImmediately(video, timestamp, frameIndex) {
         if (response && response.imageData) {
           // Crop to video area
           cropImageToVideo(response.imageData, rect)
-            .then(async (croppedFrame) => {
+            .then((croppedFrame) => {
               console.log(`🚀 Frame ${frameIndex + 1} captured, sending immediately for caption...`);
               
               // Send frame to backend for caption generation
               inFlightCaptions++;
-              const captionResult = await chrome.runtime.sendMessage({
+              
+              chrome.runtime.sendMessage({
                 action: 'analyzeFrameForCaption',
                 imageData: croppedFrame,
                 frameIndex: frameIndex
-              });
-              
-              if (captionResult && captionResult.success) {
-                const caption = captionResult.caption;
-                console.log(`✅ Caption ${frameIndex + 1} received: "${caption}"`);
-                
-                // Store caption in buffer
-                captionBuffer.push(caption);
-                receivedFrameCount++;
-                
-                // FIXED: Don't send for summarization here - let analysis loop handle it
-                // This prevents double TTS narration
-                if (receivedFrameCount >= expectedFrameCount) {
-                  console.log(`🎉 All ${expectedFrameCount} captions received! Waiting for analysis loop to trigger summarization...`);
+              }, (captionResult) => {
+                // Check for errors first
+                if (chrome.runtime.lastError) {
+                  console.error(`❌ Chrome runtime error for frame ${frameIndex + 1}:`, chrome.runtime.lastError);
+                  inFlightCaptions = Math.max(0, inFlightCaptions - 1);
+                  return;
                 }
-              } else {
-                console.error(`❌ Failed to get caption for frame ${frameIndex + 1}:`, captionResult?.error);
-              }
-              inFlightCaptions = Math.max(0, inFlightCaptions - 1);
+                
+                if (captionResult && captionResult.success) {
+                  const caption = captionResult.caption;
+                  console.log(`✅ Caption ${frameIndex + 1} received: "${caption?.substring(0, 60)}..."`);
+                  
+                  // Store caption in buffer
+                  captionBuffer.push(caption);
+                  receivedFrameCount++;
+                  
+                  // FIXED: Don't send for summarization here - let analysis loop handle it
+                  // This prevents double TTS narration
+                  if (receivedFrameCount >= expectedFrameCount) {
+                    console.log(`🎉 All ${expectedFrameCount} captions received! Waiting for analysis loop to trigger summarization...`);
+                  }
+                } else {
+                  console.error(`❌ Failed to get caption for frame ${frameIndex + 1}:`, captionResult?.error || "No result");
+                }
+                inFlightCaptions = Math.max(0, inFlightCaptions - 1);
+              });
             })
             .catch(error => {
               console.error(`❌ Error cropping frame ${frameIndex + 1}:`, error);
@@ -539,16 +551,15 @@ async function sendCaptionsForSummarization(captions) {
   try {
     console.log(`📤 Sending ${captions.length} captions for summarization...`);
     
-    const summaryResult = await chrome.runtime.sendMessage({
+    chrome.runtime.sendMessage({
       action: 'summarizeCaptions',
       captions: captions
-    });
-    
-    if (summaryResult && summaryResult.success) {
-      const summary = summaryResult.summary;
-      
-      console.log("✅ Video sequence summary complete");
-      console.log(`📝 Summary: ${summary}`);
+    }, (summaryResult) => {
+      if (summaryResult && summaryResult.success) {
+        const summary = summaryResult.summary;
+        
+        console.log("✅ Video sequence summary complete");
+        console.log(`📝 Summary: ${summary}`);
       
       // Speak the summary immediately (for keyboard shortcut users)
       console.log("🔊 Speaking video summary via TTS");
@@ -587,28 +598,29 @@ async function sendCaptionsForSummarization(captions) {
           frameCount: captions.length
         });
       
-    } else {
-      const errorMessage = summaryResult ? (summaryResult.error || "Unknown summarization error.") : "No response from background service.";
-      
-      console.error("❌ Summarization Failed:", errorMessage);
-      
-      // Speak error and resume video
-      speak(`Analysis error: ${errorMessage}`);
-      setTimeout(() => {
-        if (currentVideoElement) {
-          resumeVideoAfterNarration(currentVideoElement);
-        }
-      }, 3000);
-      
-      // Send error summary to sidepanel - let sidepanel handle TTS and resume
-      chrome.runtime.sendMessage({ 
-        action: 'videoSequenceAnalyzed', 
-        summary: `Analysis error: ${errorMessage}. Moving to next segment.`,
-        captions: [],
-        frameCount: 0,
-        isError: true
-      });
-    }
+      } else {
+        const errorMessage = summaryResult ? (summaryResult.error || "Unknown summarization error.") : "No response from background service.";
+        
+        console.error("❌ Summarization Failed:", errorMessage);
+        
+        // Speak error and resume video
+        speak(`Analysis error: ${errorMessage}`);
+        setTimeout(() => {
+          if (currentVideoElement) {
+            resumeVideoAfterNarration(currentVideoElement);
+          }
+        }, 3000);
+        
+        // Send error summary to sidepanel - let sidepanel handle TTS and resume
+        chrome.runtime.sendMessage({ 
+          action: 'videoSequenceAnalyzed', 
+          summary: `Analysis error: ${errorMessage}. Moving to next segment.`,
+          captions: [],
+          frameCount: 0,
+          isError: true
+        });
+      }
+    });
   } catch (error) {
     console.error("❌ Error in summarization:", error);
     
@@ -827,13 +839,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
     
+    case 'read_all_content':
+      console.log("📖 Read all content command received");
+      // Trigger the screen reader's readAllContent function
+      if (window.screenReader && window.screenReader.isActive) {
+        window.screenReader.readAllContent();
+      } else {
+        speak("Please activate the screen reader first by pressing Alt A.");
+      }
+      sendResponse({ success: true });
+      break;
+    
     case 'newImageCaption':
       // Real-time image caption from streaming backend
       console.log(`🖼️ Real-time caption ${request.caption.index}/${request.caption.total}: ${request.caption.caption?.substring(0, 50)}...`);
       
-      // Speak the caption immediately as it arrives
+      // Add caption to queue instead of speaking immediately
       const captionText = `Image ${request.caption.index}: ${request.caption.caption}`;
-      speak(captionText);
+      addToSpeechQueue(captionText);
       
       sendResponse({ success: true });
       break;
@@ -900,6 +923,83 @@ function speak(text) {
     speechSynthesis.speak(msg);
     console.log("🔊 TTS speak() command issued");
   }, 10);
+}
+
+/**
+ * Add text to speech queue (for image captions)
+ * Ensures captions are spoken sequentially without interruption
+ */
+function addToSpeechQueue(text) {
+  console.log(`📋 Adding to speech queue: "${text.substring(0, 50)}..."`);
+  speechQueue.push(text);
+  
+  // Start processing queue if not already speaking
+  if (!isSpeaking) {
+    processNextInQueue();
+  }
+}
+
+/**
+ * Process the next item in the speech queue
+ */
+function processNextInQueue() {
+  if (speechQueue.length === 0) {
+    isSpeaking = false;
+    console.log("✅ Speech queue empty");
+    return;
+  }
+  
+  isSpeaking = true;
+  const text = speechQueue.shift(); // Get first item from queue
+  
+  console.log(`🔊 Speaking from queue: "${text.substring(0, 50)}..." (${speechQueue.length} remaining)`);
+  
+  if (!text || text.trim().length === 0) {
+    processNextInQueue(); // Skip empty and continue
+    return;
+  }
+  
+  // Cancel any ongoing speech first
+  speechSynthesis.cancel();
+  
+  // Small delay to ensure cancel completes
+  setTimeout(() => {
+    const msg = new SpeechSynthesisUtterance(text);
+    msg.rate = 1.1;
+    msg.lang = 'en-US';
+    msg.volume = 1.0;
+    
+    msg.onstart = () => console.log("✅ Queue TTS started");
+    
+    msg.onend = () => {
+      console.log("✅ Queue TTS finished");
+      // Process next item in queue after current one finishes
+      setTimeout(() => {
+        processNextInQueue();
+      }, 100); // Small delay between captions
+    };
+    
+    msg.onerror = (e) => {
+      console.error("❌ Queue TTS error:", e);
+      // Continue with next item even if there's an error
+      setTimeout(() => {
+        processNextInQueue();
+      }, 100);
+    };
+    
+    speechSynthesis.speak(msg);
+    console.log("🔊 Queue TTS command issued");
+  }, 10);
+}
+
+/**
+ * Clear the speech queue (for stopping all captions)
+ */
+function clearSpeechQueue() {
+  console.log("🛑 Clearing speech queue");
+  speechQueue = [];
+  isSpeaking = false;
+  speechSynthesis.cancel();
 }
 
 /**
