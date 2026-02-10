@@ -1,4 +1,4 @@
-# 🎥 ReadBuddy 2.0 - AI-Powered Multi-Segment Video Analyze
+# 🎥 ReadBuddy 2.0 - AI-Powered Multi-Segment Video Analyzer
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/fafawds67685da/Readbuddy_2.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
