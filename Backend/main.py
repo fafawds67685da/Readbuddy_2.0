@@ -1,4 +1,5 @@
 # main.py (FastAPI Backend - MULTI-FRAME VIDEO ANALYSIS + PEGASUS SUMMARIZATION)
+import os
 import io
 import base64
 import urllib3
