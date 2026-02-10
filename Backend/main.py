@@ -1,6 +1,4 @@
 # main.py (FastAPI Backend - MULTI-FRAME VIDEO ANALYSIS + PEGASUS SUMMARIZATION)
-
-import os
 import io
 import base64
 import urllib3
@@ -8,7 +6,6 @@ import requests
 import torch
 import numpy as np
 from torchvision import transforms
-
 from PIL import Image, UnidentifiedImageError
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
